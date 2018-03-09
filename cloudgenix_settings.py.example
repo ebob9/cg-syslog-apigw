@@ -1,0 +1,20 @@
+# NOTE: Users below must NOT be SAML or ESP/MSP Users.
+#
+
+CLOUDGENIX_USER = 'username@example.com'
+CLOUDGENIX_PASSWORD = 'enterpassw0rdhere'
+
+AUDIT_EVENT_IGNORE = [
+    '^\/v.\..\/api\/tenants\/(.*)\/topology$',
+    '^\/v.\..\/api\/tenants\/(.*)\/monitor/(metrics|flows|object_stats)$',
+    '^\/v.\..\/api\/tenants\/(.*)\/events/query$',
+]
+ALARM_EVENT_IGNORE = [
+    'APPLICATION_APP_UNREACHABLE'
+]
+ALERT_EVENT_IGNORE = [
+    'APPLICATION_IP_COLLISION'
+]
+OPERATOR_EVENT_IGNORE = [
+
+]
