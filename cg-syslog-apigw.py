@@ -22,24 +22,25 @@ from copy import deepcopy
 try:
     import cloudgenix
 except ImportError as e:
-    print("ERROR: 'cloudgenix' python module required. (try 'pip install cloudgenix').\n {}".format(e))
+    sys.stderr.write("ERROR: 'cloudgenix' python module required. (try 'pip install cloudgenix').\n {}\n".format(e))
     sys.exit(1)
 
 # IDname for CloudGenix
 try:
     from cloudgenix_idname import generate_id_name_map
 except ImportError as e:
-    print("ERROR: 'cloudgenix-idnane' python module required. (try 'pip install cloudgenix-idname').\n {}".format(e))
+    sys.stderr.write("ERROR: 'cloudgenix-idnane' python module required. "
+                     "(try 'pip install cloudgenix-idname').\n {}\m".format(e))
     sys.exit(1)
 
 # Global Vars
 ACCEPTABLE_FACILITY = ['auth', 'authpriv', 'cron', 'daemon', 'ftp', 'kern', 'lpr', 'mail', 'news', 'syslog',
                        'user', 'uucp', 'local0', 'local1', 'local2', 'local3', 'local4', 'local5', 'local6', 'local7']
 DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
-DEFAULT_COLD_START_SEND_OLD_EVENTS = 24 # hours
+DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-SYSLOG_GW_VERSION = "1.0.0"
+SYSLOG_GW_VERSION = "1.1.0"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -51,6 +52,9 @@ clilogger = logging.getLogger(__name__)
 
 # Generic structure to keep authentication info
 sdk_vars = {
+    "email": None,  # User Email
+    "password": None,  # User password
+    "auth_token": None,  # Static AUTH_TOKEN
     "selected_element_id": None,  # Selected Element ID
     "selected_site_id": None,  # Selected Site ID
     "emit_json": None,  # Emit syslog as JSON instead of text.
@@ -87,7 +91,7 @@ def update_parse_operator(last_reported_event, sdk_vars):
     operator_list = []
     raw_operator_log = []
 
-    operator_resp = sdk.get.operators_t()
+    operator_resp = sdk.get.tenant_operators()
     status_operator = operator_resp.cgx_status
     raw_operators = operator_resp.cgx_content
     status_code = operator_resp.status_code
@@ -177,10 +181,10 @@ def update_parse_operator(last_reported_event, sdk_vars):
             else:
                 operator_request_datetime = current_datetime_mark
 
-            # print "TIME WTF: ", int(event_timestamp) / 1000000.0
-            # print "OPERATOR_REQUEST_DATETIME: ", operator_request_datetime.isoformat() + 'Z'
-            # print "LAST_REPORTED_EVENT:  ", last_reported_event.isoformat() + 'Z'
-            # print " > ", (operator_request_datetime > last_reported_event)
+            # sys.stdout.write("TIME WTF: {}".format(int(event_timestamp) / 1000000.0))
+            # sys.stdout.write("OPERATOR_REQUEST_DATETIME: {}".format(operator_request_datetime.isoformat() + 'Z'))
+            # sys.stdout.write("LAST_REPORTED_EVENT:  {}".format(last_reported_event.isoformat() + 'Z'))
+            # sys.stdout.write(" > {}".format((operator_request_datetime > last_reported_event)))
 
             # Since operator log is long back, make sure log is in request window.
             if operator_request_datetime > last_reported_event:
@@ -223,12 +227,12 @@ def update_parse_operator(last_reported_event, sdk_vars):
 
             # if no latest event or event is newer, update.
             if not latest_event:
-                # print "Updating '{0}' to '{1}'.".format(str(latest_event),
-                #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
+                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(str(latest_event),
+                #                                     event_datetime.strftime("%b %d %Y %H:%M:%S")))
                 latest_event = event_datetime
             elif event_datetime > latest_event:
-                # print "Updating '{0}' to '{1}'.".format(latest_event.strftime("%b %d %Y %H:%M:%S"),
-                #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
+                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(latest_event.strftime("%b %d %Y %H:%M:%S"),
+                #                                     event_datetime.strftime("%b %d %Y %H:%M:%S")))
                 latest_event = event_datetime
 
         info_string = ""
@@ -282,9 +286,9 @@ def update_parse_operator(last_reported_event, sdk_vars):
 
         parsed_events.append(event_dict)
 
-    # print json.dumps(parsed_events, indent=4)
+    # sys.stdout.write(json.dumps(parsed_events, indent=4))
     #
-    # print repr(latest_event)
+    # sys.stdout.write(repr(latest_event))
 
     return True, latest_event, parsed_events, len(operator_list), status_code
 
@@ -341,9 +345,9 @@ def update_parse_audit(last_reported_event, sdk_vars):
             else:
                 audit_request_datetime = current_datetime_mark
 
-            # print "AUDIT_REQUEST_DATETIME: ", audit_request_datetime.isoformat() + 'Z'
-            # print "LAST_REPORTED_EVENT:  ", last_reported_event.isoformat() + 'Z'
-            # print " > ", (audit_request_datetime > last_reported_event)
+            # sys.stdout.write("AUDIT_REQUEST_DATETIME: {}\n".format(audit_request_datetime.isoformat() + 'Z'))
+            # sys.stdout.write("LAST_REPORTED_EVENT:  {}\n".format(last_reported_event.isoformat() + 'Z'))
+            # sys.stdout.write(" > {}\n".format((audit_request_datetime > last_reported_event)))
 
             # Since audit log is long back, make sure log is in request window.
             if audit_request_datetime > last_reported_event:
@@ -387,11 +391,11 @@ def update_parse_audit(last_reported_event, sdk_vars):
 
             # if no latest event or event is newer, update.
             if not latest_event:
-                # print "Updating '{0}' to '{1}'.".format(str(latest_event),
+                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(str(latest_event)))
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
             elif event_datetime > latest_event:
-                # print "Updating '{0}' to '{1}'.".format(latest_event.strftime("%b %d %Y %H:%M:%S"),
+                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(latest_event.strftime("%b %d %Y %H:%M:%S")))
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
 
@@ -476,9 +480,9 @@ def update_parse_audit(last_reported_event, sdk_vars):
 
             parsed_events.append(event_dict)
 
-    # print json.dumps(parsed_events, indent=4)
+    # sys.stdout.write(json.dumps(parsed_events, indent=4))
     #
-    # print repr(latest_event)
+    # sys.stdout.write(repr(latest_event))
 
     return True, latest_event, parsed_events, len(audit_list), status_code
 
@@ -553,7 +557,7 @@ def update_parse_alarm(last_reported_event, sdk_vars):
         alarms_list.extend(raw_alarms.get('items', []))
         offset = raw_alarms.get('_offset')
         # debug offset
-        # print str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list))
+        # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
         while offset:
             query["_offset"] = offset
             event_resp = sdk.post.events_query(query)
@@ -569,7 +573,7 @@ def update_parse_alarm(last_reported_event, sdk_vars):
             alarms_list.extend(raw_alarms.get('items', []))
             offset = raw_alarms.get('_offset')
             # debug offset
-            # print str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list))
+            # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
 
     if not alarms_list:
         # Valid transaction, but no data. Return empty.
@@ -605,20 +609,24 @@ def update_parse_alarm(last_reported_event, sdk_vars):
 
             # if no latest event or event is newer, update.
             if not latest_event:
-                # print "Updating '{0}' to '{1}'.".format(str(latest_event),
+                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(str(latest_event)))
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
             elif event_datetime > latest_event:
-                # print "Updating '{0}' to '{1}'.".format(latest_event.strftime("%b %d %Y %H:%M:%S"),
+                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(latest_event.strftime("%b %d %Y %H:%M:%S")))
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
 
-        info_string = ""
-        for key, value in event.get('info', {}).iteritems():
-            if type(value) is list:
-                info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            else:
-                info_string = info_string + key.upper() + ": " + str(value) + " "
+        info_iter = event.get('info', {})
+        if info_iter is None:
+            info_string = ""
+        else:
+            for key, value in event.get('info', {}).iteritems():
+                if type(value) is list:
+                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+                else:
+                    info_string = info_string + key.upper() + ": " + str(value) + " "
+
         # pull code and reference for filtering
         code = event.get('code', '')
         reference = event.get('entity_ref', "none")
@@ -700,9 +708,9 @@ def update_parse_alarm(last_reported_event, sdk_vars):
 
             parsed_events.append(event_dict)
 
-    # print json.dumps(parsed_events, indent=4)
+    # sys.stdout.write(json.dumps(parsed_events, indent=4))
     #
-    # print repr(latest_event)
+    # sys.stdout.write(repr(latest_event))
 
     return True, latest_event, parsed_events, len(alarms_list), status_code
 
@@ -777,7 +785,7 @@ def update_parse_alert(last_reported_event, sdk_vars):
         alerts_list.extend(raw_alerts.get('items', []))
         offset = raw_alerts.get('_offset')
         # debug offset
-        # print str(raw_alerts.get("total_count", "??")) + " / " + str(len(alarms_list))
+        # sys.stdout.write(str(raw_alerts.get("total_count", "??")) + " / " + str(len(alarms_list)))
         while offset:
             query["_offset"] = offset
             event_resp = sdk.post.events_query(query)
@@ -793,7 +801,7 @@ def update_parse_alert(last_reported_event, sdk_vars):
             alerts_list.extend(raw_alerts.get('items', []))
             offset = raw_alerts.get('_offset')
             # debug offset
-            # print str(raw_alerts.get("total_count", "??")) + " / " + str(len(alerts_list))
+            # sys.stdout.write(str(raw_alerts.get("total_count", "??")) + " / " + str(len(alerts_list)))
 
     if not alerts_list:
         # Valid transaction, but no data. Return empty.
@@ -810,7 +818,7 @@ def update_parse_alert(last_reported_event, sdk_vars):
     for event in events_list:
 
         discard_event = False
-        # print "EVENT: ", json.dumps(event, indent=4)
+        # sys.stdout.write("EVENT: {}\n".format(json.dumps(event, indent=4)))
 
         event_dict = collections.OrderedDict()
 
@@ -830,20 +838,24 @@ def update_parse_alert(last_reported_event, sdk_vars):
 
             # if no latest event or event is newer, update.
             if not latest_event:
-                # print "Updating '{0}' to '{1}'.".format(str(latest_event),
+                # sys.stdout.write("Updating '{0}' to '{1}'\n.".format(str(latest_event)))
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
             elif event_datetime > latest_event:
-                # print "Updating '{0}' to '{1}'.".format(latest_event.strftime("%b %d %Y %H:%M:%S"),
+                # sys.stdout.write("Updating '{0}' to '{1}'\n.".format(latest_event.strftime("%b %d %Y %H:%M:%S")))
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
 
         info_string = ""
-        for key, value in event.get('info', {}).iteritems():
-            if type(value) is list:
-                info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            else:
-                info_string = info_string + key.upper() + ": " + str(value) + " "
+        info_iter = event.get('info', {})
+        if info_iter is None:
+            info_string = ""
+        else:
+            for key, value in event.get('info', {}).iteritems():
+                if type(value) is list:
+                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+                else:
+                    info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
@@ -878,8 +890,7 @@ def update_parse_alert(last_reported_event, sdk_vars):
             # xlate siteid to name, if exists
             event_siteid = event.get('site_id', '')
             event_elementid = event.get('element_id', '')
-            # print "EVENT_SITEID,", event_siteid, json.dumps(event, indent=4)
-
+            # sys.stdout.write("EVENT_SITEID: {}\n".format(event_siteid, json.dumps(event, indent=4)))
 
             if sdk_vars.get('emit_json'):
                 # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
@@ -929,9 +940,9 @@ def update_parse_alert(last_reported_event, sdk_vars):
 
             parsed_events.append(event_dict)
 
-    # print json.dumps(parsed_events, indent=4)
+    # sys.stdout.write(json.dumps(parsed_events, indent=4))
     #
-    # print repr(latest_event)
+    # sys.stdout.write(repr(latest_event))
 
     return True, latest_event, parsed_events, len(alerts_list), status_code
 
@@ -957,8 +968,8 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
         for event in parsed_events:
             log_string = "{0} {1} ".format(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT),
                                            RFC5424_HOSTNAME)
-            # print "LOG_STRING", log_string
-            # print json.dumps(event, indent=4)
+            # sys.stdout.write("LOG_STRING: {}\n".format(log_string))
+            # sys.stdout.write(json.dumps(event, indent=4))
             for key, value in event.iteritems():
                 if key in ['type']:
                     # no label for element
@@ -1236,8 +1247,9 @@ if __name__ == "__main__":
     sdk_vars['disable_audit'] = not args['enable_audit']
 
     if args['facility'] not in ACCEPTABLE_FACILITY:
-        print "ERROR: Facility given was {0}. Needs to be one of: \n\t{1}.".format(args['facility'],
-                                                                                   ", ".join(ACCEPTABLE_FACILITY))
+        sys.stderr.write("ERROR: Facility given was {0}. "
+                         "Needs to be one of: \n\t{1}.".format(args['facility'],
+                                                               ", ".join(ACCEPTABLE_FACILITY)))
         exit(1)
 
     # set syslog stuffs
@@ -1289,13 +1301,31 @@ if __name__ == "__main__":
 
     # Check config file
     try:
+        from cloudgenix_settings import CLOUDGENIX_AUTH_TOKEN
+
+        sdk_vars["auth_token"] = CLOUDGENIX_AUTH_TOKEN
+    except ImportError:
+        # will get caught below.
+        CLOUDGENIX_AUTH_TOKEN = None
+
+    try:
         from cloudgenix_settings import CLOUDGENIX_USER, CLOUDGENIX_PASSWORD
 
         sdk_vars["email"] = CLOUDGENIX_USER
         sdk_vars["password"] = CLOUDGENIX_PASSWORD
     except ImportError:
-        print "{0} - Could not read cloudgenix_settings.py config file. Exiting.".format(
-            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)))
+        CLOUDGENIX_USER = None
+        CLOUDGENIX_PASSWORD = None
+        # will get caught below
+
+    # Validate we got an Auth Token or User/Pass
+    if not (sdk_vars["email"] and sdk_vars["password"]) and not sdk_vars["auth_token"]:
+        sys.stderr.write("{0} - Could not read user/pass or auth_token from cloudgenix_settings.py config file. "
+                         "Exiting.\n".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
+        print("{0} {1} {2}".format(CLOUDGENIX_USER,
+                                   CLOUDGENIX_PASSWORD,
+                                   CLOUDGENIX_AUTH_TOKEN))
+        sys.stderr.flush()
         local_event_generate(
             info={"NOTICE": "Could not read cloudgenix_settings.py config file. Exiting."},
             code="CG_API_SYSLOG_GW_CONFIG_READ_FAILURE",
@@ -1351,34 +1381,61 @@ if __name__ == "__main__":
         code="CG_API_SYSLOG_GW_COLD_START",
         sdk_vars=sdk_vars)
 
-    print "CloudGenix API -> SYSLOG Gateway v{0} ({1})\n".format(SYSLOG_GW_VERSION,
-                                                                 "{}, API v{}".format(str(sdk.controller),
-                                                                                      cloudgenix.version))
+    sys.stdout.write("CloudGenix API -> SYSLOG Gateway v{0} ({1})\n".format(SYSLOG_GW_VERSION,
+                                                                            "{}, API v{}".format(str(sdk.controller),
+                                                                                                 cloudgenix.version)))
+    sys.stdout.flush()
 
     # interactive or cmd-line specified initial login
     logged_in = False
-    while not logged_in:
 
-        logged_in = sdk.interactive.login(email=sdk_vars['email'], password=sdk_vars['password'])
-
+    if sdk_vars["auth_token"]:
+        # use Static AUTH_TOKEN based authentication.
+        logged_in = sdk.interactive.use_token(sdk_vars["auth_token"])
         if not logged_in:
-            print "{0} - Initial login failed. Will Auto-retry in {1} seconds. Ctrl-C to stop.".format(
-                str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)), TIME_BETWEEN_LOGIN_ATTEMPTS)
-            local_event_generate(info={"NOTICE": "Initial login failed. Will Auto-retry in {0} seconds"
+            # Token is not recoverable, exit.
+            sys.stdout.write("{0} - Auth_Token use failed. Unrecoverable, please verify token.\n".format(
+                str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
+            sys.stdout.flush()
+            local_event_generate(info={"NOTICE": "Initial Auth_Token failed. Unrecoverable, will exit."
                                                  "".format(TIME_BETWEEN_LOGIN_ATTEMPTS)},
                                  code="CG_API_SYSLOG_GW_LOGIN_FAILURE",
                                  severity="critical",
                                  notice_type="alarm",
                                  sdk_vars=sdk_vars)
-            time.sleep(TIME_BETWEEN_LOGIN_ATTEMPTS)
+            sys.exit(1)
         else:
-            print "{0} - Initial login successful." \
-                  "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)))
-            # update and wait!
+            sys.stdout.write("{0} - Initial Auth_Token use successful.\n"
+                             "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
+            sys.stdout.flush()
+            # update timestamp.
             logintime = datetime.datetime.utcnow()
+    else:
+        # Use email/password auth.
+        while not logged_in:
+
+            logged_in = sdk.interactive.login(email=sdk_vars['email'], password=sdk_vars['password'])
+
+            if not logged_in:
+                sys.stdout.write("{0} - Initial login failed. Will Auto-retry in {1} seconds. Ctrl-C to stop.\n".format(
+                    str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)), TIME_BETWEEN_LOGIN_ATTEMPTS))
+                sys.stdout.flush()
+                local_event_generate(info={"NOTICE": "Initial login failed. Will Auto-retry in {0} seconds"
+                                                     "".format(TIME_BETWEEN_LOGIN_ATTEMPTS)},
+                                     code="CG_API_SYSLOG_GW_LOGIN_FAILURE",
+                                     severity="critical",
+                                     notice_type="alarm",
+                                     sdk_vars=sdk_vars)
+                time.sleep(TIME_BETWEEN_LOGIN_ATTEMPTS)
+            else:
+                sys.stdout.write("{0} - Initial login successful.\n"
+                                 "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
+                sys.stdout.flush()
+                # update and wait!
+                logintime = datetime.datetime.utcnow()
 
     if not sdk_vars['disable_name']:
-        print "\nCaching ID->Name values for log message substitution.."
+        sys.stdout.write("\nCaching ID->Name values for log message substitution..\n")
         id_map = generate_id_name_map(sdk)
         # clean up unknown '0' values
         id_map.pop('0')
@@ -1387,11 +1444,12 @@ if __name__ == "__main__":
         id_map = {}
 
     # syslog code start
-    print "\nStarting syslog emitter for {0} with a {1} sec refresh, sending to {2}:{3}. Ctrl-C to stop." \
-          "".format(sdk.tenant_name, str(refresh_delay), str(SYSLOG_HOST), str(SYSLOG_PORT))
+    sys.stdout.write("\nStarting syslog emitter for {0} with a {1} sec refresh, sending to {2}:{3}. Ctrl-C to stop.\n"
+                     "".format(sdk.tenant_name, str(refresh_delay), str(SYSLOG_HOST), str(SYSLOG_PORT)))
 
     if sdk_vars['emit_json']:
-        print "Switching to JSON SYSLOG messages from command-line switch."
+        sys.stdout.write("Switching to JSON SYSLOG messages from command-line switch.\n")
+    sys.stdout.flush()
 
     clilogger.info("Beginning query of events for {0}.".format(sdk.tenant_name))
 
@@ -1410,194 +1468,223 @@ if __name__ == "__main__":
         while True:
             # check if login needs refreshed
             curtime = datetime.datetime.utcnow()
+
             if curtime > (logintime + datetime.timedelta(hours=REFRESH_LOGIN_TOKEN_INTERVAL)) or logged_in is False:
-                if logged_in:
-                    print "{0} - {1} hours since last login. attempting to re-login.".format(
-                        str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                        str(REFRESH_LOGIN_TOKEN_INTERVAL))
+                if sdk_vars["auth_token"]:
+                    # just update id name map, don't re-login.
+                    sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
+                    id_map = generate_id_name_map(sdk)
+                    logintime = datetime.datetime.utcnow()
+
                 else:
-                    print "{0} - Not logged in. attempting to re-login.".format(
-                        str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)))
+                    # email/password, normal session management
+                    if logged_in:
+                        sys.stdout.write("{0} - {1} hours since last login. attempting to re-login.\n".format(
+                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                            str(REFRESH_LOGIN_TOKEN_INTERVAL)))
 
-                # logout to attempt to release session ID
-                _ = sdk.interactive.logout()
-                # ignore success or fail of logout, continue to log in again.
-                logged_in = False
-                # try to re-login
-                while not logged_in:
-                    logged_in = sdk.interactive.login(email=sdk_vars['email'], password=sdk_vars['password'])
-
-                    if not logged_in:
-                        print "{0} - Re-login failed. Will Auto-retry in {1} seconds." \
-                              "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                        TIME_BETWEEN_LOGIN_ATTEMPTS)
-                        local_event_generate(info={"NOTICE": "Re-login failed. Will Auto-retry in {0} seconds."
-                                                             "".format(TIME_BETWEEN_LOGIN_ATTEMPTS)},
-                                             code="CG_API_SYSLOG_GW_LOGIN_FAILURE",
-                                             sdk_vars=sdk_vars)
-                        time.sleep(TIME_BETWEEN_LOGIN_ATTEMPTS)
                     else:
-                        print "{0} - Re-login successful." \
-                              "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)))
-                        # update and wait!
-                        logintime = datetime.datetime.utcnow()
+                        sys.stdout.write("{0} - Not logged in. attempting to re-login.\n".format(
+                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
+                    sys.stdout.flush()
 
-                        if not sdk_vars['disable_name']:
-                            # update id-> name maps
-                            print "\nUpdating ID->Name values for log message substitution.."
-                            id_map = generate_id_name_map(sdk)
+                    # logout to attempt to release session ID
+                    _ = sdk.interactive.logout()
+                    # ignore success or fail of logout, continue to log in again.
+                    logged_in = False
+                    # try to re-login
+                    while not logged_in:
+                        logged_in = sdk.interactive.login(email=sdk_vars['email'], password=sdk_vars['password'])
+
+                        if not logged_in:
+                            sys.stdout.write("{0} - Re-login failed. Will Auto-retry in {1} seconds.\n"
+                                             "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                       TIME_BETWEEN_LOGIN_ATTEMPTS))
+                            local_event_generate(info={"NOTICE": "Re-login failed. Will Auto-retry in {0} seconds."
+                                                                 "".format(TIME_BETWEEN_LOGIN_ATTEMPTS)},
+                                                 code="CG_API_SYSLOG_GW_LOGIN_FAILURE",
+                                                 sdk_vars=sdk_vars)
+                            time.sleep(TIME_BETWEEN_LOGIN_ATTEMPTS)
+                        else:
+                            sys.stdout.write("{0} - Re-login successful.\n"
+                                             "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
+                            # update and wait!
+                            logintime = datetime.datetime.utcnow()
+
+                            if not sdk_vars['disable_name']:
+                                # update id-> name maps
+                                sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
+                                id_map = generate_id_name_map(sdk)
+                        sys.stdout.flush()
 
             # get new events, if logged in.
             if logged_in:
                 if not sdk_vars['disable_operator']:
                     # Operator events
                     operator_status, operator_last_event_date, \
-                    operator_parsed_events, operator_event_count, \
-                    operator_resp_code = update_parse_operator(operator_last_event_date, sdk_vars=sdk_vars)
+                        operator_parsed_events, operator_event_count, \
+                        operator_resp_code = update_parse_operator(operator_last_event_date, sdk_vars=sdk_vars)
 
                     # success and data returned
                     if operator_status and operator_parsed_events:
-                        print "{0} - {1} OPERATOR event(s) retrieved. Sending SYSLOG. (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            str(len(operator_parsed_events)),
-                            operator_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - {1} OPERATOR event(s) retrieved. "
+                                         "Sending SYSLOG. (Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   str(len(operator_parsed_events)),
+                                                   operator_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                         emit_syslog(operator_parsed_events, remote_logger, id_map)
 
                     # success but no events or empty response.
                     elif operator_status:
-                        print "{0} - No reportable OPERATOR events retrieved. No SYSLOG to send. (Last event at {1})" \
-                              "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                        operator_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - No reportable OPERATOR events retrieved. No SYSLOG to send. "
+                                         "(Last event at {1})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   operator_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                     # transaction error, trigger a re-login.
                     else:
                         # queue for relogin if "needs auth" code.
-                        if operator_resp_code in [401, 403]:
+                        if operator_resp_code in [401, 403] and not sdk_vars["auth_token"]:
                             logged_in = False
-                        print "{0} - CloudGenix OPERATOR API request error ({1}). (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            operator_resp_code,
-                            operator_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - CloudGenix OPERATOR API request error ({1}). "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   operator_resp_code,
+                                                   operator_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
                         local_event_generate(info={"NOTICE": "CloudGenix OPERATOR API request error "
                                                              "({0}).".format(operator_resp_code)},
                                              code="CG_API_SYSLOG_GW_REQUEST_FAILURE",
                                              sdk_vars=sdk_vars)
+                    sys.stdout.flush()
 
                 if not sdk_vars['disable_audit']:
                     # Audit events
                     audit_status, audit_last_event_date, \
-                    audit_parsed_events, audit_event_count, \
-                    audit_resp_code = update_parse_audit(audit_last_event_date, sdk_vars=sdk_vars)
+                        audit_parsed_events, audit_event_count, \
+                        audit_resp_code = update_parse_audit(audit_last_event_date, sdk_vars=sdk_vars)
 
                     # success and data returned
                     if audit_status and audit_parsed_events:
-                        print "{0} - {1} AUDIT event(s) retrieved. Sending SYSLOG. (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            str(len(audit_parsed_events)),
-                            audit_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - {1} AUDIT event(s) retrieved. Sending SYSLOG. "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   str(len(audit_parsed_events)),
+                                                   audit_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                         emit_syslog(audit_parsed_events, remote_logger, id_map)
 
                     # success but no events or empty response.
                     elif audit_status:
-                        print "{0} - No reportable AUDIT events retrieved. No SYSLOG to send. (Last event at {1})" \
-                              "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                        audit_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - No reportable AUDIT events retrieved. No SYSLOG to send. "
+                                         "(Last event at {1})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   audit_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                     # transaction error, trigger a re-login.
                     else:
                         # queue for relogin if "needs auth" code.
-                        if audit_resp_code in [401, 403]:
+                        if audit_resp_code in [401, 403] and not sdk_vars["auth_token"]:
                             logged_in = False
-                        print "{0} - CloudGenix AUDIT API request error ({1}). (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            audit_resp_code,
-                            audit_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - CloudGenix AUDIT API request error ({1}). "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   audit_resp_code,
+                                                   audit_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
                         local_event_generate(info={"NOTICE": "CloudGenix AUDIT API request error "
                                                              "({0}).".format(audit_resp_code)},
                                              code="CG_API_SYSLOG_GW_REQUEST_FAILURE",
                                              sdk_vars=sdk_vars)
+                    sys.stdout.flush()
 
                 if not sdk_vars['disable_alarm']:
                     # Alarm events
                     alarm_status, alarm_last_event_date, \
-                    alarm_parsed_events, alarm_event_count, \
-                    alarm_resp_code = update_parse_alarm(alarm_last_event_date, sdk_vars=sdk_vars)
+                        alarm_parsed_events, alarm_event_count, \
+                        alarm_resp_code = update_parse_alarm(alarm_last_event_date, sdk_vars=sdk_vars)
 
                     # success and data returned
                     if alarm_status and alarm_parsed_events:
-                        print "{0} - {1} ALARM event(s) retrieved. Sending SYSLOG. (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            str(len(alarm_parsed_events)),
-                            alarm_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - {1} ALARM event(s) retrieved. Sending SYSLOG. "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   str(len(alarm_parsed_events)),
+                                                   alarm_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                         emit_syslog(alarm_parsed_events, remote_logger, id_map)
 
                     # success but no events or empty response.
                     elif alarm_status:
-                        print "{0} - No reportable ALARM events retrieved. No SYSLOG to send. (Last event at {1})" \
-                              "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                        alarm_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - No reportable ALARM events retrieved. No SYSLOG to send. "
+                                         "(Last event at {1})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   alarm_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                     # transaction error, trigger a re-login.
                     else:
                         # queue for relogin if "needs auth" code.
-                        if alarm_resp_code in [401, 403]:
+                        if alarm_resp_code in [401, 403] and not sdk_vars["auth_token"]:
                             logged_in = False
-                        print "{0} - CloudGenix ALARM API request error ({1}). (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            alarm_resp_code,
-                            alarm_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - CloudGenix ALARM API request error ({1}). "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   alarm_resp_code,
+                                                   alarm_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
                         local_event_generate(info={"NOTICE": "CloudGenix ALARM API request error "
                                                              "({0}).".format(alarm_resp_code)},
                                              code="CG_API_SYSLOG_GW_REQUEST_FAILURE",
                                              sdk_vars=sdk_vars)
+                    sys.stdout.flush()
 
                 if not sdk_vars['disable_alert']:
                     # Alert events
                     alert_status, alert_last_event_date, \
-                    alert_parsed_events, alert_event_count, \
-                    alert_resp_code = update_parse_alert(alert_last_event_date, sdk_vars=sdk_vars)
+                        alert_parsed_events, alert_event_count, \
+                        alert_resp_code = update_parse_alert(alert_last_event_date, sdk_vars=sdk_vars)
 
                     # success and data returned
                     if alert_status and alert_parsed_events:
-                        print "{0} - {1} ALERT event(s) retrieved. Sending SYSLOG. (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            str(len(alert_parsed_events)),
-                            alert_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - {1} ALERT event(s) retrieved. Sending SYSLOG. "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   str(len(alert_parsed_events)),
+                                                   alert_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                         emit_syslog(alert_parsed_events, remote_logger, id_map)
 
                     # success but no events or empty response.
                     elif alert_status:
-                        print "{0} - No reportable ALERT events retrieved. No SYSLOG to send. (Last event at {1})" \
-                              "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                        alert_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - No reportable ALERT events retrieved. No SYSLOG to send. "
+                                         "(Last event at {1})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   alert_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
 
                     # transaction error, trigger a re-login.
                     else:
                         # queue for relogin if "needs auth" code.
-                        if alert_resp_code in [401, 403]:
+                        if alert_resp_code in [401, 403] and not sdk_vars["auth_token"]:
                             logged_in = False
-                        print "{0} - CloudGenix ALERT API request error ({1}). (Last event at {2})".format(
-                            str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                            alert_resp_code,
-                            alert_last_event_date.strftime(SYSLOG_DATE_FORMAT))
+                        sys.stdout.write("{0} - CloudGenix ALERT API request error ({1}). "
+                                         "(Last event at {2})\n"
+                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
+                                                   alert_resp_code,
+                                                   alert_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
                         local_event_generate(info={"NOTICE": "CloudGenix ALERT API request error "
                                                              "({0}).".format(alert_resp_code)},
                                              code="CG_API_SYSLOG_GW_REQUEST_FAILURE",
                                              sdk_vars=sdk_vars)
+                    sys.stdout.flush()
 
             # Not logged in
             else:
-                print "{0} - Could not get events, not currently logged in.".format(
-                    str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)))
+                sys.stdout.write("{0} - Could not get events, not currently logged in or invalid Auth_Token.\n".format(
+                    str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
                 local_event_generate(info={"NOTICE": "Could not get events, not currently logged in."},
                                      code="CG_API_SYSLOG_GW_LOGIN_FAILURE",
                                      severity="critical",
                                      notice_type="alarm",
                                      sdk_vars=sdk_vars)
+                sys.stdout.flush()
 
             # sleep for next update
             time.sleep(refresh_delay)
@@ -1606,5 +1693,7 @@ if __name__ == "__main__":
             info={"NOTICE": "CG API to Syslog Service COLD STOP"},
             code="CG_API_SYSLOG_GW_COLD_STOP",
             sdk_vars=sdk_vars)
-        print "Finished! exiting.."
-        sdk.interactive.logout()
+        sys.stdout.write("Finished! exiting..\n")
+        # logout if not AUTH_TOKEN
+        if not sdk_vars["auth_token"]:
+            sdk.interactive.logout()
