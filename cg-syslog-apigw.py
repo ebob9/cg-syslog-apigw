@@ -40,7 +40,7 @@ DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
 DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-SYSLOG_GW_VERSION = "1.1.0"
+SYSLOG_GW_VERSION = "1.1.1"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -400,11 +400,14 @@ def update_parse_audit(last_reported_event, sdk_vars):
                 latest_event = event_datetime
 
         info_string = ""
-        for key, value in event.iteritems():
-            if type(value) is list:
-                info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            else:
-                info_string = info_string + key.upper() + ": " + str(value) + " "
+        info_iter = event.get('info', {})
+        # if info_iter happens to return 'None', continue with blank string.
+        if info_iter is not None:
+            for key, value in event.get('info', {}).iteritems():
+                if type(value) is list:
+                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+                else:
+                    info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
@@ -617,10 +620,10 @@ def update_parse_alarm(last_reported_event, sdk_vars):
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
 
+        info_string = ""
         info_iter = event.get('info', {})
-        if info_iter is None:
-            info_string = ""
-        else:
+        # if info_iter happens to return 'None', continue with blank string.
+        if info_iter is not None:
             for key, value in event.get('info', {}).iteritems():
                 if type(value) is list:
                     info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
