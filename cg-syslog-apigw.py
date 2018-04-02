@@ -40,7 +40,7 @@ DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
 DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-SYSLOG_GW_VERSION = "1.1.1"
+SYSLOG_GW_VERSION = "1.1.2"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -1477,6 +1477,8 @@ if __name__ == "__main__":
                     # just update id name map, don't re-login.
                     sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
                     id_map = generate_id_name_map(sdk)
+                    # clean up unknown '0' values
+                    id_map.pop('0')
                     logintime = datetime.datetime.utcnow()
 
                 else:
@@ -1518,6 +1520,8 @@ if __name__ == "__main__":
                                 # update id-> name maps
                                 sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
                                 id_map = generate_id_name_map(sdk)
+                                # clean up unknown '0' values
+                                id_map.pop('0')
                         sys.stdout.flush()
 
             # get new events, if logged in.
