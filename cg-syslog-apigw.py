@@ -40,12 +40,15 @@ DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
 DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-SYSLOG_GW_VERSION = "1.1.2"
+SYSLOG_GW_VERSION = "1.2.0"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
 RFC5424_HOSTNAME = "cg-syslog-apigw"
 LEGACY_EVENTS_API = False
+
+# datetime Epoch for UNIX timestamp calcs
+EPOCH = datetime.datetime(1970, 1, 1)
 
 # Set NON-SYSLOG logging to use function name
 clilogger = logging.getLogger(__name__)
@@ -162,7 +165,7 @@ def update_parse_operator(last_reported_event, sdk_vars):
                 d.pop('sess_inactive_reason', None)
 
             # parse user agent
-            for user_agent_key, user_agent_value in d.get('user_agent', {}).iteritems():
+            for user_agent_key, user_agent_value in d.get('user_agent', {}).items():
                 d['user_agent_' + user_agent_key] = str(user_agent_value)
             d.pop('user_agent', None)
 
@@ -236,7 +239,7 @@ def update_parse_operator(last_reported_event, sdk_vars):
                 latest_event = event_datetime
 
         info_string = ""
-        for key, value in event.iteritems():
+        for key, value in event.items():
             if type(value) is list:
                 info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
             else:
@@ -302,16 +305,38 @@ def update_parse_audit(last_reported_event, sdk_vars):
     """
     latest_event = last_reported_event
     current_datetime_mark = datetime.datetime.utcnow()
-    current_time_mark = current_datetime_mark.isoformat() + 'Z'
+    # Access log requires EPOCH timestamp in ms
+    current_time_mark = (current_datetime_mark - EPOCH).total_seconds() * 1000
     parsed_events = []
 
     # add 1 second to make sure we don't get the same event over and over)
-    start_time = (last_reported_event + datetime.timedelta(seconds=1)).isoformat() + 'Z'
+    start_time = ((last_reported_event + datetime.timedelta(seconds=1)) - EPOCH).total_seconds() * 1000
+
+    audit_query_tpl = {
+        "limit": "100",
+        "query_params": {
+            "request_ts": {
+                "gte": 152000000000
+            },
+            "response_ts": {
+                "lte": 1525722908000
+            }
+        },
+        "sort_params": {
+            "response_ts": "desc"
+        },
+        "dest_page": 1
+    }
+
+    # get Audits from last event.
+    query = deepcopy(audit_query_tpl)
+    query["query_params"]["request_ts"]["gte"] = start_time
+    query["query_params"]["response_ts"]["lte"] = current_time_mark
 
     audit_list = []
 
     # get events from last event.
-    audit_resp = sdk.get.tenant_access()
+    audit_resp = sdk.post.query_auditlog(query)
     status_audit = audit_resp.cgx_status
     raw_audit = audit_resp.cgx_content
     status_code = audit_resp.status_code
@@ -323,14 +348,42 @@ def update_parse_audit(last_reported_event, sdk_vars):
 
     # iterate through audits
     if status_audit:
-        raw_audit_items = raw_audit.get('items', [])
+
+        raw_audit_items = []
+
+        cur_audit_items = raw_audit.get('items', [])
+
+        if cur_audit_items:
+            raw_audit_items.extend(cur_audit_items)
+
+        # iterate until no more audit events
+        while cur_audit_items:
+            # incrament dest_page in query
+            query["dest_page"] += 1
+            audit_resp = sdk.post.query_auditlog(query)
+            status_audit = audit_resp.cgx_status
+            raw_audit = audit_resp.cgx_content
+            status_code = audit_resp.status_code
+
+            if not status_audit:
+                # error, return empty.
+                # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
+                return False, last_reported_event, [], 0, status_code
+
+            cur_audit_items = raw_audit.get('items', [])
+            raw_audit_items.extend(cur_audit_items)
+
+            # debug
+            sys.stdout.write(str(raw_audit.get("total_count", "??")) + " / " + str(len(raw_audit_items)) + "\n")
 
         parsed_audit_items = []
 
         # manipulate the log into a standard event format
-        for d in raw_audit_items:
+        for iter_d in raw_audit_items:
+            # deepcopy to allow modification
+            d = deepcopy(iter_d)
             # remove '_' prefixed keys in audits.
-            for k in d.keys():
+            for k in iter_d.keys():
                 if k.startswith('_'):
                     del d[k]
             # remove response body, as it is too long for syslog
@@ -349,13 +402,11 @@ def update_parse_audit(last_reported_event, sdk_vars):
             # sys.stdout.write("LAST_REPORTED_EVENT:  {}\n".format(last_reported_event.isoformat() + 'Z'))
             # sys.stdout.write(" > {}\n".format((audit_request_datetime > last_reported_event)))
 
-            # Since audit log is long back, make sure log is in request window.
-            if audit_request_datetime > last_reported_event:
-                # add timestamp for sorting
-                d['code'] = ("audit_" + str(request_type)).upper()
-                d['time'] = audit_request_datetime.isoformat() + 'Z'
-                # add to parsing list.
-                parsed_audit_items.append(d)
+            # add timestamp for sorting
+            d['code'] = ("audit_" + str(request_type)).upper()
+            d['time'] = audit_request_datetime.isoformat() + 'Z'
+            # add to parsing list.
+            parsed_audit_items.append(d)
 
         # add current alarms to list
         audit_list.extend(parsed_audit_items)
@@ -403,7 +454,7 @@ def update_parse_audit(last_reported_event, sdk_vars):
         info_iter = event.get('info', {})
         # if info_iter happens to return 'None', continue with blank string.
         if info_iter is not None:
-            for key, value in event.get('info', {}).iteritems():
+            for key, value in event.get('info', {}).items():
                 if type(value) is list:
                     info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
                 else:
@@ -624,7 +675,7 @@ def update_parse_alarm(last_reported_event, sdk_vars):
         info_iter = event.get('info', {})
         # if info_iter happens to return 'None', continue with blank string.
         if info_iter is not None:
-            for key, value in event.get('info', {}).iteritems():
+            for key, value in event.get('info', {}).items():
                 if type(value) is list:
                     info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
                 else:
@@ -690,7 +741,9 @@ def update_parse_alarm(last_reported_event, sdk_vars):
                 event_dict['severity'] = event.get('severity', 'info')
                 event_dict['correlation'] = event.get('correlation_id', '')
                 # for RFC5424, pass everything as key/value.
-                event_dict.update(event.get('info', {}))
+                event_info = event.get('info', {})
+                if event_info:
+                    event_dict.update(event_info)
 
             else:
                 # Normal text SYSLOG.
@@ -854,7 +907,7 @@ def update_parse_alert(last_reported_event, sdk_vars):
         if info_iter is None:
             info_string = ""
         else:
-            for key, value in event.get('info', {}).iteritems():
+            for key, value in event.get('info', {}).items():
                 if type(value) is list:
                     info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
                 else:
@@ -921,7 +974,9 @@ def update_parse_alert(last_reported_event, sdk_vars):
                 event_dict['severity'] = event.get('severity', 'info')
                 event_dict['correlation'] = event.get('correlation_id', '')
                 # for RFC5424, pass everything as key/value.
-                event_dict.update(event.get('info', {}))
+                event_info = event.get('info', {})
+                if event_info:
+                    event_dict.update(event_info)
 
             else:
                 # Normal text SYSLOG.
@@ -973,7 +1028,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
                                            RFC5424_HOSTNAME)
             # sys.stdout.write("LOG_STRING: {}\n".format(log_string))
             # sys.stdout.write(json.dumps(event, indent=4))
-            for key, value in event.iteritems():
+            for key, value in event.items():
                 if key in ['type']:
                     # no label for element
                     log_string += str(value) + ": "
@@ -984,10 +1039,10 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
 
             if not sdk_vars['disable_name']:
                 # remap IDs to names
-                for key, value in id_name_map.iteritems():
+                for key, value in id_name_map.items():
                     log_string = log_string.replace(key, "{0} ({1})".format(value, key))
 
-            clilogger.debug("LOG MESSAGE SIZE: ", len(log_string))
+            # clilogger.debug("LOG MESSAGE SIZE: ", len(log_string))
             # set the severity. If none, set to info.
             severity = str(event.get('severity', 'info')).lower()
             # TCP syslog needs a LF to segment entries.
@@ -1006,7 +1061,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
         # old text strings.
         for event in parsed_events:
             log_string = ""
-            for key, value in event.iteritems():
+            for key, value in event.items():
                 if key in ['site', 'operator']:
                     # no label for these
                     log_string += str(value) + ": "
@@ -1017,7 +1072,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
 
             if not sdk_vars['disable_name']:
                 # remap IDs to names
-                for key, value in id_name_map.iteritems():
+                for key, value in id_name_map.items():
                     log_string = log_string.replace(key, "{0} ({1})".format(value, key))
 
             clilogger.debug("LOG MESSAGE SIZE: ", len(log_string))
@@ -1108,7 +1163,7 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
                 "notice": "CG API to SYSLOG Generated Alert"
             }
         info_string = ""
-        for key, value in info.iteritems():
+        for key, value in info.items():
             if type(value) is list:
                 info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
             else:
@@ -1183,7 +1238,7 @@ if __name__ == "__main__":
                                   help="Controller URI, ex. https://controller.cloudgenix.com:8443",
                                   default=None)
 
-    controller_group.add_argument("--hours", "-H", help="Number of Hours to go back in history on cold start (1-240)",
+    controller_group.add_argument("--hours", "-H", help="Number of Hours to go back in history on cold start (0-240)",
                                   type=int, default=DEFAULT_COLD_START_SEND_OLD_EVENTS)
 
     controller_group.add_argument("--delay", "-L", help="Number of seconds to wait between API refreshes (60-65535)",
@@ -1206,7 +1261,7 @@ if __name__ == "__main__":
                        action='store_true',
                        default=False)
     debug_group.add_argument("--debug", "-D", help="Verbose Debug info, levels 0-2",
-                             default=0)
+                             type=int, default=0)
 
     args = vars(parser.parse_args())
 

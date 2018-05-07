@@ -9,7 +9,7 @@ REST-based APIs provide the most flexible model for interacting with disparate a
 * Active CloudGenix Account
 * Python >= 2.7 (this script is not yet Python3 compatible)
 * Python modules:
-    * cloudgenix >=4.5.7b1 - <https://github.com/CloudGenix/sdk-python>
+    * cloudgenix >=4.7.1b1 - <https://github.com/CloudGenix/sdk-python>
     * cloudgenix-idname >=1.1.2 - <https://github.com/ebob9/cloudgenix-idname>
 * A compute system with the following:
   * Virtual or Physical hardware.
@@ -36,6 +36,7 @@ MIT
 #### Version
 Version | Changes
 ------- | --------
+**1.2.0**| Update for May 2018 controller release
 **1.1.2**| Fix Issue #3
 **1.1.1**| Fix Issue #2
 **1.1.0**| Update for AUTH_TOKEN support (requires cloudgenix >= v4.6.1b1), fix Issue #1
