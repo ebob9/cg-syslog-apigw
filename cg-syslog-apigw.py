@@ -65,235 +65,13 @@ sdk_vars = {
     "alarm_event_start": datetime.datetime.utcnow() - datetime.timedelta(hours=24),  # this gets updated by arg vars.
     "alert_event_start": datetime.datetime.utcnow() - datetime.timedelta(hours=24),  # this gets updated by arg vars.
     "disable_name": False,  # Disable name parsing, this gets updated by arg vars
-    "disable_operator": False,  # Disable audit event parsing, this gets updated by arg vars
     "disable_audit": False,  # Disable audit event parsing, this gets updated by arg vars
     "disable_alert": False,  # Disable alert event parsing, this gets updated by arg vars
     "disable_alarm": False,  # Disable alarm parsing, this gets updated by arg vars
-    "ignore_operator": [],  # Ignore list for Audits, loaded from cloudgenix_settings.py
     "ignore_audit": [],  # Ignore list for Audits, loaded from cloudgenix_settings.py
     "ignore_alarm": [],  # Ignore list for Alarm, loaded from cloudgenix_settings.py
     "ignore_alert": []  # Ignore list for Alert, loaded from cloudgenix_settings.py
 }
-
-
-def update_parse_operator(last_reported_event, sdk_vars):
-    """
-    Get operator from tenant.
-    :param sdk_vars: sdk_vars global info struct
-    :param last_reported_event: datetime.datetime of the oldest event reported.
-    :return: status (boolean), parsed_events (event report struct), json_events (events list in json)
-    """
-    latest_event = last_reported_event
-    current_datetime_mark = datetime.datetime.utcnow()
-    current_time_mark = current_datetime_mark.isoformat() + 'Z'
-    parsed_events = []
-
-    # add 1 second to make sure we don't get the same event over and over)
-    start_time = (last_reported_event + datetime.timedelta(seconds=1)).isoformat() + 'Z'
-
-    operator_list = []
-    raw_operator_log = []
-
-    operator_resp = sdk.get.tenant_operators()
-    status_operator = operator_resp.cgx_status
-    raw_operators = operator_resp.cgx_content
-    status_code = operator_resp.status_code
-
-    if not status_operator or type(raw_operators) is not dict:
-        # error, return empty.
-        # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-        return False, last_reported_event, [], 0, status_code
-
-    operator_id_list = raw_operators.get('items', [])
-
-    for operator_dict in operator_id_list:
-        operator_id = operator_dict.get('id')
-        if operator_id:
-            # get operator events
-            session_resp = sdk.get.operator_sessions(operator_id)
-            status_id = session_resp.cgx_status
-            raw_id = session_resp.cgx_content
-
-            if not status_id or type(raw_id) is not dict:
-                # look for blank response, this is ok.
-                if session_resp.status_code in [404]:
-                    # 404 means no operator session log.
-                    continue
-                # error, return empty.
-                # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                return False, last_reported_event, [], 0, session_resp.status_code
-
-            raw_operator_items = raw_id.get('items', [])
-            # append to full log.
-            for event in raw_operator_items:
-                event['operator_id'] = operator_id
-                raw_operator_log.append(event)
-
-    # iterate through operators
-    if status_operator:
-        raw_operator_items = raw_operator_log
-
-        parsed_operator_items = []
-
-        # manipulate the log into a standard event format
-        for d in raw_operator_items:
-            inactive = d.get('inactive')
-            inactive_reason = d.get('inactive_reason')
-            d.pop('inactive', None)
-            d.pop('inactive_reason', None)
-            d['sess_inactive'] = inactive
-            d['sess_inactive_reason'] = inactive_reason
-
-            disabled = d.get('disabled')
-            disabled_reason = d.get('disabled_reason')
-            d.pop('disabled', None)
-            d.pop('disabled_reason', None)
-            d['sess_disabled'] = disabled
-            d['sess_disabled_reason'] = disabled_reason
-
-            if inactive or disabled:
-                d['status'] = "LOGGED_OUT"
-            else:
-                d['status'] = "LOGGED_IN"
-
-            d['login_time'] = d.get('_created_on_utc')
-            d['event_time'] = d.get('_updated_on_utc')
-
-            if not disabled:
-                d.pop('sess_disabled_reason', None)
-            if not inactive:
-                d.pop('sess_inactive_reason', None)
-
-            # parse user agent
-            for user_agent_key, user_agent_value in d.get('user_agent', {}).items():
-                d['user_agent_' + user_agent_key] = str(user_agent_value)
-            d.pop('user_agent', None)
-
-            # remove '_' prefixed keys in operators.
-            for k in d.keys():
-                if k.startswith('_'):
-                    del d[k]
-
-            # Get time of request.
-            event_timestamp = d.get('event_time', 0)
-            # Get request type for code insertion
-            request_type = d.get('status')
-            # if no timestamp, set to NOW so event will definitely be emitted.
-            if event_timestamp:
-                operator_request_datetime = datetime.datetime.utcfromtimestamp(int(event_timestamp) / 10000000.0)
-            else:
-                operator_request_datetime = current_datetime_mark
-
-            # sys.stdout.write("TIME WTF: {}".format(int(event_timestamp) / 1000000.0))
-            # sys.stdout.write("OPERATOR_REQUEST_DATETIME: {}".format(operator_request_datetime.isoformat() + 'Z'))
-            # sys.stdout.write("LAST_REPORTED_EVENT:  {}".format(last_reported_event.isoformat() + 'Z'))
-            # sys.stdout.write(" > {}".format((operator_request_datetime > last_reported_event)))
-
-            # Since operator log is long back, make sure log is in request window.
-            if operator_request_datetime > last_reported_event:
-                # add timestamp for sorting
-                d['time'] = operator_request_datetime.isoformat() + 'Z'
-                # add to parsing list.
-                parsed_operator_items.append(d)
-
-        # add current alarms to list
-        operator_list.extend(parsed_operator_items)
-
-    if not operator_list:
-        # Valid transaction, but no data. Return empty.
-        return True, last_reported_event, [], 0, status_code
-
-    # combine lists
-    combined_list = []
-    combined_list.extend(operator_list)
-
-    # sort by create time
-    events_list = sorted(combined_list, key=lambda k: k["time"])
-
-    # parse events
-    for event in events_list:
-
-        discard_event = False
-
-        event_dict = collections.OrderedDict()
-
-        event_type = event.get('type', '')
-
-        # This is for Operator log event parsing.
-        event_timestamp = event.get('event_time')
-        syslogdate = "NO_TIME_REPORTED"
-        if event_timestamp:
-
-            # convert to datetime
-            event_datetime = datetime.datetime.utcfromtimestamp(int(event_timestamp) / 10000000.0)
-            syslogdate = event_datetime.strftime(SYSLOG_DATE_FORMAT)
-
-            # if no latest event or event is newer, update.
-            if not latest_event:
-                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(str(latest_event),
-                #                                     event_datetime.strftime("%b %d %Y %H:%M:%S")))
-                latest_event = event_datetime
-            elif event_datetime > latest_event:
-                # sys.stdout.write("Updating '{0}' to '{1}'.\n".format(latest_event.strftime("%b %d %Y %H:%M:%S"),
-                #                                     event_datetime.strftime("%b %d %Y %H:%M:%S")))
-                latest_event = event_datetime
-
-        info_string = ""
-        for key, value in event.items():
-            if type(value) is list:
-                info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            else:
-                info_string = info_string + key.upper() + ": " + str(value) + " "
-
-        # find out if this operator event should be ignored.
-
-        # start adding items to ordered dict
-        # xlate siteid to name, if exists
-        event_operatorid = event.get('operator_id', '')
-        event_siteid = event.get('site_id', '')
-
-        if sdk_vars.get('emit_json'):
-            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-            event_dict['operator'] = event_operatorid
-
-            event_dict['type'] = 'operator'
-            # just populate the message as raw JSON.
-            event_dict['info'] = json.dumps(event)
-
-        elif RFC5424:
-            # Strict RFC5424
-            # set type to operator
-            event_dict['type'] = 'operator'
-
-            event_dict['cloudgenix_host'] = RFC5424_HOSTNAME
-
-            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-            event_dict['site'] = id_map.get(event_siteid, event_siteid)
-
-            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-            event_dict['operator'] = id_map.get(event_operatorid, event_operatorid)
-            event_dict['device_time'] = syslogdate
-            event_dict['severity'] = event.get('severity', 'info')
-            event_dict['correlation'] = event.get('correlation_id', '')
-            # for RFC5424, pass everything as key/value.
-            event_dict.update(event)
-
-        else:
-            # Normal text SYSLOG.
-            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-            event_dict['operator'] = event_operatorid
-
-            event_dict['severity'] = 'info'
-            event_dict['type'] = 'operator'
-            event_dict['info'] = info_string
-
-        parsed_events.append(event_dict)
-
-    # sys.stdout.write(json.dumps(parsed_events, indent=4))
-    #
-    # sys.stdout.write(repr(latest_event))
-
-    return True, latest_event, parsed_events, len(operator_list), status_code
 
 
 def update_parse_audit(last_reported_event, sdk_vars):
@@ -1204,10 +982,12 @@ if __name__ == "__main__":
                                                     "See http://strftime.org/ ."
                                                     "Default is '{0}'.".format(SYSLOG_DATE_FORMAT.replace('%', '%%')),
                               default=SYSLOG_DATE_FORMAT, type=str)
-    syslog_group.add_argument("--rfc5424", help="RFC 5424 Compliant Syslog messages",
-                              default=False, action='store_true')
-    syslog_group.add_argument('--from-hostname', required='--rfc5424' in sys.argv,
-                              type=str, help="From Hostname string, required if RFC 5424 log format.")
+    syslog_group.add_argument("--rfc5424", help="(Deprecated - now default) RFC 5424 Compliant Syslog messages",
+                              default=True, action='store_true')
+    syslog_group.add_argument('--from-hostname', required=False,
+                              type=str, help="Specify Hostname string. "
+                                             "If not set, will attempt to auto-detect hostname.",
+                              default=None)
 
     parsing_group = parser.add_argument_group('Parsing', 'These options change how this program parses messages')
     parsing_group.add_argument("--emitjson", "-J", help="Emit messages as JSON",
@@ -1216,7 +996,8 @@ if __name__ == "__main__":
     parsing_group.add_argument("--disable-name", "-DNAME", help="Disable translation of ID to Name.",
                                action='store_true',
                                default=False)
-    parsing_group.add_argument("--enable-operator", "-EOPERATOR", help="Enable Sending Operator Log",
+    parsing_group.add_argument("--enable-operator", "-EOPERATOR", help="(Deprecated - now part of Audit log) "
+                                                                       "Enable Sending Operator Log",
                                action='store_true',
                                default=False)
     parsing_group.add_argument("--enable-audit", "-EAUDIT", help="Enable Sending Audit Log",
@@ -1292,7 +1073,6 @@ if __name__ == "__main__":
     else:
         refresh_delay = args['delay']
 
-    sdk_vars['operator_event_start'] = datetime.datetime.utcnow() - datetime.timedelta(hours=args['hours'])
     sdk_vars['audit_event_start'] = datetime.datetime.utcnow() - datetime.timedelta(hours=args['hours'])
     sdk_vars['alarm_event_start'] = datetime.datetime.utcnow() - datetime.timedelta(hours=args['hours'])
     sdk_vars['alert_event_start'] = datetime.datetime.utcnow() - datetime.timedelta(hours=args['hours'])
@@ -1300,8 +1080,7 @@ if __name__ == "__main__":
     sdk_vars['disable_name'] = args['disable_name']
     sdk_vars['disable_alarm'] = args['disable_alarm']
     sdk_vars['disable_alert'] = args['disable_alert']
-    # audit and operator should be disabled by default
-    sdk_vars['disable_operator'] = not args['enable_operator']
+    # audit should be disabled by default
     sdk_vars['disable_audit'] = not args['enable_audit']
 
     if args['facility'] not in ACCEPTABLE_FACILITY:
@@ -1322,9 +1101,10 @@ if __name__ == "__main__":
     # Set date if modified.
     SYSLOG_DATE_FORMAT = args['date_format']
 
-    if args['rfc5424']:
-        RFC5424 = True
-        RFC5424_HOSTNAME = args['from_hostname']
+    # always RFC-5424. TODO: remove non-RFC 5424 output completely.
+    RFC5424 = True
+    # set hostname from args if specified, or get via socket lib.
+    RFC5424_HOSTNAME = args['from_hostname'] if args['from_hostname'] else socket.gethostname()
 
     # Start remote logger
     remote_logger = logging.getLogger("REMOTE")
@@ -1394,11 +1174,6 @@ if __name__ == "__main__":
 
     # load ignore regular expressions
     try:
-        from cloudgenix_settings import OPERATOR_EVENT_IGNORE
-    except ImportError:
-        OPERATOR_EVENT_IGNORE = []
-
-    try:
         from cloudgenix_settings import AUDIT_EVENT_IGNORE
     except ImportError:
         AUDIT_EVENT_IGNORE = []
@@ -1413,13 +1188,10 @@ if __name__ == "__main__":
     except ImportError:
         ALERT_EVENT_IGNORE = []
 
-    operator_compile = []
     audit_compile = []
     alarm_compile = []
     alert_compile = []
 
-    for regstr in OPERATOR_EVENT_IGNORE:
-        operator_compile.append(re.compile(regstr))
     for regstr in AUDIT_EVENT_IGNORE:
         audit_compile.append(re.compile(regstr))
     for regstr in ALARM_EVENT_IGNORE:
@@ -1427,7 +1199,6 @@ if __name__ == "__main__":
     for regstr in ALERT_EVENT_IGNORE:
         alert_compile.append(re.compile(regstr))
 
-    sdk_vars['ignore_audit'] = operator_compile
     sdk_vars['ignore_audit'] = audit_compile
     sdk_vars['ignore_alarm'] = alarm_compile
     sdk_vars['ignore_alert'] = alert_compile
@@ -1515,7 +1286,6 @@ if __name__ == "__main__":
     logintime = datetime.datetime.utcnow()
 
     # last event date from sdk_vars
-    operator_last_event_date = sdk_vars['operator_event_start']
     audit_last_event_date = sdk_vars['audit_event_start']
     alarm_last_event_date = sdk_vars['alarm_event_start']
     alert_last_event_date = sdk_vars['alert_event_start']
@@ -1581,45 +1351,6 @@ if __name__ == "__main__":
 
             # get new events, if logged in.
             if logged_in:
-                if not sdk_vars['disable_operator']:
-                    # Operator events
-                    operator_status, operator_last_event_date, \
-                        operator_parsed_events, operator_event_count, \
-                        operator_resp_code = update_parse_operator(operator_last_event_date, sdk_vars=sdk_vars)
-
-                    # success and data returned
-                    if operator_status and operator_parsed_events:
-                        sys.stdout.write("{0} - {1} OPERATOR event(s) retrieved. "
-                                         "Sending SYSLOG. (Last event at {2})\n"
-                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                                   str(len(operator_parsed_events)),
-                                                   operator_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
-
-                        emit_syslog(operator_parsed_events, remote_logger, id_map)
-
-                    # success but no events or empty response.
-                    elif operator_status:
-                        sys.stdout.write("{0} - No reportable OPERATOR events retrieved. No SYSLOG to send. "
-                                         "(Last event at {1})\n"
-                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                                   operator_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
-
-                    # transaction error, trigger a re-login.
-                    else:
-                        # queue for relogin if "needs auth" code.
-                        if operator_resp_code in [401, 403] and not sdk_vars["auth_token"]:
-                            logged_in = False
-                        sys.stdout.write("{0} - CloudGenix OPERATOR API request error ({1}). "
-                                         "(Last event at {2})\n"
-                                         "".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT)),
-                                                   operator_resp_code,
-                                                   operator_last_event_date.strftime(SYSLOG_DATE_FORMAT)))
-                        local_event_generate(info={"NOTICE": "CloudGenix OPERATOR API request error "
-                                                             "({0}).".format(operator_resp_code)},
-                                             code="CG_API_SYSLOG_GW_REQUEST_FAILURE",
-                                             sdk_vars=sdk_vars)
-                    sys.stdout.flush()
-
                 if not sdk_vars['disable_audit']:
                     # Audit events
                     audit_status, audit_last_event_date, \

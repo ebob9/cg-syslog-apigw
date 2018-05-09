@@ -36,7 +36,7 @@ MIT
 #### Version
 Version | Changes
 ------- | --------
-**1.2.0**| Update for May 2018 controller release
+**1.2.0**| Update for May 2018 controller release. Changes include: RFC-5424 now default, operator log merged to audit log, hostname detection, and others.
 **1.1.2**| Fix Issue #3
 **1.1.1**| Fix Issue #2
 **1.1.0**| Update for AUTH_TOKEN support (requires cloudgenix >= v4.6.1b1), fix Issue #1
