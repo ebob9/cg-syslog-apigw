@@ -40,7 +40,7 @@ DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
 DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-SYSLOG_GW_VERSION = "1.2.0"
+SYSLOG_GW_VERSION = "1.2.1"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -152,7 +152,7 @@ def update_parse_audit(last_reported_event, sdk_vars):
             raw_audit_items.extend(cur_audit_items)
 
             # debug
-            sys.stdout.write(str(raw_audit.get("total_count", "??")) + " / " + str(len(raw_audit_items)) + "\n")
+            # sys.stdout.write(str(raw_audit.get("total_count", "??")) + " / " + str(len(raw_audit_items)) + "\n")
 
         parsed_audit_items = []
 
@@ -996,8 +996,8 @@ if __name__ == "__main__":
     parsing_group.add_argument("--disable-name", "-DNAME", help="Disable translation of ID to Name.",
                                action='store_true',
                                default=False)
-    parsing_group.add_argument("--enable-operator", "-EOPERATOR", help="(Deprecated - now part of Audit log) "
-                                                                       "Enable Sending Operator Log",
+    parsing_group.add_argument("--enable-operator", "-EOPERATOR", help="(Deprecated - now part of Audit log. This "
+                                                                       "switch remains for backwards compatibility.)",
                                action='store_true',
                                default=False)
     parsing_group.add_argument("--enable-audit", "-EAUDIT", help="Enable Sending Audit Log",
