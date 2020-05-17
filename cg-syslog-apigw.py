@@ -39,6 +39,7 @@ ACCEPTABLE_FACILITY = ['auth', 'authpriv', 'cron', 'daemon', 'ftp', 'kern', 'lpr
 DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
 DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
+TIME_BETWEEN_IDNAME_REFRESH = 48 # hours
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
 SYSLOG_GW_VERSION = "1.2.1"
 EMIT_TCP_SYSLOG = False
@@ -310,6 +311,7 @@ def update_parse_audit(last_reported_event, sdk_vars):
                 event_dict['type'] = 'audit'
                 event_dict['info'] = reference_string + " " + info_string
 
+            event_dict['id'] = event_id
             parsed_events.append(event_dict)
 
     # sys.stdout.write(json.dumps(parsed_events, indent=4))
@@ -540,6 +542,7 @@ def update_parse_alarm(last_reported_event, sdk_vars):
                 event_dict['correlation'] = event.get('correlation_id', '')
                 event_dict['info'] = reference_string + " " + info_string
 
+            event_dict['id'] = event.get('id','')
             parsed_events.append(event_dict)
 
     # sys.stdout.write(json.dumps(parsed_events, indent=4))
@@ -774,6 +777,7 @@ def update_parse_alert(last_reported_event, sdk_vars):
                 event_dict['correlation'] = event.get('correlation_id', '')
                 event_dict['info'] = reference_string + " " + info_string
 
+            event_dict['id'] = event.get('id','')
             parsed_events.append(event_dict)
 
     # sys.stdout.write(json.dumps(parsed_events, indent=4))
@@ -968,12 +972,12 @@ if __name__ == "__main__":
 
     # Allow Controller modification and debug level sets.
     syslog_group = parser.add_argument_group('SYSLOG', 'These options set where to send SYSLOG messages')
-    syslog_group.add_argument("--server", "-S", help="SYSLOG server. Required.", required=True,
+    syslog_group.add_argument("--server", "-S", help="SYSLOG server. More than one can be specified separated by a comma.", required=True,
                               default=None, )
-    syslog_group.add_argument("--port", "-P", help="Port on SYSLOG server. "
+    syslog_group.add_argument("--port", "-P", help="Port on SYSLOG server. For multiple servers, their respective ports should be specified sequentially, separated by a comma."
                                                    "Default is 514.",
                               default=514, type=int)
-    syslog_group.add_argument("--use-tcp", "-T", help="Send TCP Syslog instead of UDP.",
+    syslog_group.add_argument("--use-tcp", "-T", help="Send TCP Syslog instead of UDP. For multiple servers, their respective connection type should be specified sequentially, separated by a comma.",
                               default=False, action='store_true')
     syslog_group.add_argument("--facility", "-F", help="SYSLOG Facility to use server. "
                                                        "Default is 'user'.",
@@ -1296,17 +1300,8 @@ if __name__ == "__main__":
         while True:
             # check if login needs refreshed
             curtime = datetime.datetime.utcnow()
-
             if curtime > (logintime + datetime.timedelta(hours=REFRESH_LOGIN_TOKEN_INTERVAL)) or logged_in is False:
-                if sdk_vars["auth_token"]:
-                    # just update id name map, don't re-login.
-                    sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
-                    id_map = generate_id_name_map(sdk)
-                    # clean up unknown '0' values
-                    id_map.pop('0')
-                    logintime = datetime.datetime.utcnow()
-
-                else:
+                if sdk_vars["email"]:
                     # email/password, normal session management
                     if logged_in:
                         sys.stdout.write("{0} - {1} hours since last login. attempting to re-login.\n".format(
@@ -1341,13 +1336,17 @@ if __name__ == "__main__":
                             # update and wait!
                             logintime = datetime.datetime.utcnow()
 
-                            if not sdk_vars['disable_name']:
-                                # update id-> name maps
-                                sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
-                                id_map = generate_id_name_map(sdk)
-                                # clean up unknown '0' values
-                                id_map.pop('0')
                         sys.stdout.flush()
+
+            if curtime > (logintime + datetime.timedelta(hours=TIME_BETWEEN_IDNAME_REFRESH)):
+                if args['disable-name']:
+                    continue
+
+                sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
+                id_map = generate_id_name_map(sdk)
+                id_map.pop('0')
+
+            sys.stdout.flush()
 
             # get new events, if logged in.
             if logged_in:
