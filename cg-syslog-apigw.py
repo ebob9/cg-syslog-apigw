@@ -1339,14 +1339,11 @@ if __name__ == "__main__":
                         sys.stdout.flush()
 
             if curtime > (logintime + datetime.timedelta(hours=TIME_BETWEEN_IDNAME_REFRESH)):
-                if args['disable-name']:
-                    continue
-
-                sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
-                id_map = generate_id_name_map(sdk)
-                id_map.pop('0')
-
-            sys.stdout.flush()
+                if not args['disable-name']:
+                    sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
+                    id_map = generate_id_name_map(sdk)
+                    id_map.pop('0')
+                    sys.stdout.flush()
 
             # get new events, if logged in.
             if logged_in:
