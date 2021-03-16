@@ -36,6 +36,7 @@ MIT
 #### Version
 Version | Changes
 ------- | --------
+**1.2.3**| Minor bug fixes
 **1.2.2**| Added IDs for alarms & alerts, Separate timer for idname updates
 **1.2.1**| Minor fixes, and clarification on OPERATOR log merging with AUDIT.
 **1.2.0**| Update for May 2018 controller release. Changes include: RFC-5424 now default, operator log merged to audit log, hostname detection, and others.

@@ -41,7 +41,7 @@ DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 TIME_BETWEEN_IDNAME_REFRESH = 48 # hours
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-SYSLOG_GW_VERSION = "1.2.2"
+SYSLOG_GW_VERSION = "1.2.3"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -73,6 +73,30 @@ sdk_vars = {
     "ignore_alarm": [],  # Ignore list for Alarm, loaded from cloudgenix_settings.py
     "ignore_alert": []  # Ignore list for Alert, loaded from cloudgenix_settings.py
 }
+
+def _uppercase(obj):
+    """ Make dictionary uppercase """
+    if isinstance(obj, dict):
+        return {k.upper():_uppercase(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, set, tuple)):
+        t = type(obj)
+        return t(_uppercase(o) for o in obj)
+    elif isinstance(obj, str):
+        return obj.upper()
+    else:
+        return obj
+
+
+def clean_info(obj):
+    datastr = json.dumps(obj)
+    datastr = datastr.replace("{", "")
+    datastr = datastr.replace("}", "")
+    datastr = datastr.replace("[", "")
+    datastr = datastr.replace("]", "")
+    datastr = datastr.replace("\"", "")
+
+    return datastr
+
 
 
 def update_parse_audit(last_reported_event, sdk_vars):
@@ -233,11 +257,14 @@ def update_parse_audit(last_reported_event, sdk_vars):
         info_iter = event.get('info', {})
         # if info_iter happens to return 'None', continue with blank string.
         if info_iter is not None:
-            for key, value in event.get('info', {}).items():
-                if type(value) is list:
-                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-                else:
-                    info_string = info_string + key.upper() + ": " + str(value) + " "
+            info_upper = _uppercase(info_iter)
+            info_string = clean_info(info_upper)
+
+            # for key, value in event.get('info', {}).items():
+            #     if type(value) is list:
+            #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+            #     else:
+            #         info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
