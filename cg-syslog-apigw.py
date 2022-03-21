@@ -42,7 +42,7 @@ TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 TIME_BETWEEN_IDNAME_REFRESH = 48 # hours
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
 
-SYSLOG_GW_VERSION = "1.2.3"
+SYSLOG_GW_VERSION = "1.2.4"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -150,6 +150,11 @@ def update_parse_audit(last_reported_event, sdk_vars):
         # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
         return False, last_reported_event, [], 0, status_code
 
+    #
+    # Flag to track data
+    #
+    more_data = True
+
     # iterate through audits
     if status_audit:
 
@@ -161,8 +166,8 @@ def update_parse_audit(last_reported_event, sdk_vars):
             raw_audit_items.extend(cur_audit_items)
 
         # iterate until no more audit events
-        while cur_audit_items:
-            # incrament dest_page in query
+        while more_data:
+            # increment dest_page in query
             query["dest_page"] += 1
             audit_resp = sdk.post.query_auditlog(query)
             status_audit = audit_resp.cgx_status
@@ -172,10 +177,18 @@ def update_parse_audit(last_reported_event, sdk_vars):
             if not status_audit:
                 # error, return empty.
                 # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                return False, last_reported_event, [], 0, status_code
+                more_data = False
+
+                #
+                # Return already collected audit logs
+                # return False, last_reported_event, [], 0, status_code
+                #
 
             cur_audit_items = raw_audit.get('items', [])
-            raw_audit_items.extend(cur_audit_items)
+            if cur_audit_items is None:
+                more_data = False
+            else:
+                raw_audit_items.extend(cur_audit_items)
 
             # debug
             # sys.stdout.write(str(raw_audit.get("total_count", "??")) + " / " + str(len(raw_audit_items)) + "\n")
@@ -430,10 +443,13 @@ def update_parse_alarm(last_reported_event, sdk_vars):
             if not status_alarm:
                 # error, return empty.
                 # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                return False, last_reported_event, [], 0, status_code
+                # return False, last_reported_event, [], 0, status_code
+                # Update: Do not return empty. Instead, return data already retrieved
+                offset = None
 
-            alarms_list.extend(raw_alarms.get('items', []))
-            offset = raw_alarms.get('_offset')
+            else:
+                alarms_list.extend(raw_alarms.get('items', []))
+                offset = raw_alarms.get('_offset')
             # debug offset
             # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
 
@@ -661,10 +677,12 @@ def update_parse_alert(last_reported_event, sdk_vars):
             if not status_alert:
                 # error, return empty.
                 # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                return False, last_reported_event, [], 0, status_code
-
-            alerts_list.extend(raw_alerts.get('items', []))
-            offset = raw_alerts.get('_offset')
+                # return False, last_reported_event, [], 0, status_code
+                # Update: Do not return empty. Instead, return data already retrieved
+                offset = None
+            else:
+                alerts_list.extend(raw_alerts.get('items', []))
+                offset = raw_alerts.get('_offset')
             # debug offset
             # sys.stdout.write(str(raw_alerts.get("total_count", "??")) + " / " + str(len(alerts_list)))
 
