@@ -36,6 +36,7 @@ MIT
 #### Version
 Version | Changes
 ------- | --------
+**1.2.5**| Fixes for low ID (0-9) in ID name map. Inital fixes for issues with nested alert/alarm messages. *NOTE:* Extremly long VPN alert messages may be dropped due to length if ID->Name resolution is enabled in this release. *WORKAROUND:* Disable ID Name resolution (-DNAME). Will be further addressed in future release.
 **1.2.4**| Minor bug fixes
 **1.2.3**| Minor bug fixes
 **1.2.2**| Added IDs for alarms & alerts, Separate timer for idname updates

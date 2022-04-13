@@ -30,7 +30,7 @@ try:
     from cloudgenix_idname import generate_id_name_map
 except ImportError as e:
     sys.stderr.write("ERROR: 'cloudgenix-idnane' python module required. "
-                     "(try 'pip install cloudgenix-idname').\n {}\m".format(e))
+                     "(try 'pip install cloudgenix-idname').\n {}\n".format(e))
     sys.exit(1)
 
 # Global Vars
@@ -42,7 +42,7 @@ TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
 TIME_BETWEEN_IDNAME_REFRESH = 48 # hours
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
 
-SYSLOG_GW_VERSION = "1.2.4"
+SYSLOG_GW_VERSION = "1.2.5"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
@@ -75,29 +75,35 @@ sdk_vars = {
     "ignore_alert": []  # Ignore list for Alert, loaded from cloudgenix_settings.py
 }
 
-def _uppercase(obj):
-    """ Make dictionary uppercase """
-    if isinstance(obj, dict):
-        return {k.upper():_uppercase(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, set, tuple)):
-        t = type(obj)
-        return t(_uppercase(o) for o in obj)
-    elif isinstance(obj, str):
-        return obj.upper()
-    else:
-        return obj
-
 
 def clean_info(obj):
-    datastr = json.dumps(obj)
-    datastr = datastr.replace("{", "")
-    datastr = datastr.replace("}", "")
-    datastr = datastr.replace("[", "")
-    datastr = datastr.replace("]", "")
-    datastr = datastr.replace("\"", "")
+    """
+    Clean info into syslog format (CAPS keys, NON CAPS (normal) values.)
+    :param obj: An object from the CGX API
+    :return: String text to send to syslog.
+    """
+    if isinstance(obj, dict):
+        info_string = ""
+        # iterate dict - create info string with cap KEY only.
+        # re-run clean_info to parse values and handle sub-dicts.
 
-    return datastr
+        for key, value in obj.items():
+            info_string = info_string + key.upper() + ": " + clean_info(value) + " "
 
+        # Return with no trailing whitespace.
+        return info_string.rstrip()
+
+    elif isinstance(obj, (list, set, tuple)):
+        # return joined list with no trailing whitespace
+        return ",".join([clean_info(value) for value in obj]).rstrip()
+
+    elif isinstance(obj, str):
+        # Return string as given with no trailing whitespace.
+        return obj.rstrip()
+
+    else:
+        # attempt casting to string if not what expected.
+        return str(obj).rstrip()
 
 
 def update_parse_audit(last_reported_event, sdk_vars):
@@ -271,8 +277,7 @@ def update_parse_audit(last_reported_event, sdk_vars):
         info_iter = event.get('info', {})
         # if info_iter happens to return 'None', continue with blank string.
         if info_iter is not None:
-            info_upper = _uppercase(info_iter)
-            info_string = clean_info(info_upper)
+            info_string = clean_info(info_iter)
 
             # for key, value in event.get('info', {}).items():
             #     if type(value) is list:
@@ -499,11 +504,13 @@ def update_parse_alarm(last_reported_event, sdk_vars):
         info_iter = event.get('info', {})
         # if info_iter happens to return 'None', continue with blank string.
         if info_iter is not None:
-            for key, value in event.get('info', {}).items():
-                if type(value) is list:
-                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-                else:
-                    info_string = info_string + key.upper() + ": " + str(value) + " "
+            info_string = clean_info(info_iter)
+
+            # for key, value in event.get('info', {}).items():
+            #     if type(value) is list:
+            #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+            #     else:
+            #         info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
@@ -731,14 +738,15 @@ def update_parse_alert(last_reported_event, sdk_vars):
 
         info_string = ""
         info_iter = event.get('info', {})
-        if info_iter is None:
-            info_string = ""
-        else:
-            for key, value in event.get('info', {}).items():
-                if type(value) is list:
-                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-                else:
-                    info_string = info_string + key.upper() + ": " + str(value) + " "
+        # if info_iter happens to return 'None', continue with blank string.
+        if info_iter is not None:
+            info_string = clean_info(info_iter)
+
+            # for key, value in event.get('info', {}).items():
+            #     if type(value) is list:
+            #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+            #     else:
+            #         info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
@@ -880,7 +888,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
             if severity in ['info']:
                 rmt_logger.info(log_string)
             elif severity in ['minor']:
-                rmt_logger.warn(log_string)
+                rmt_logger.warning(log_string)
             elif severity in ['major']:
                 rmt_logger.error(log_string)
             elif severity in ['critical']:
@@ -913,7 +921,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
             if severity in ['info']:
                 rmt_logger.info(log_string)
             elif severity in ['minor']:
-                rmt_logger.warn(log_string)
+                rmt_logger.warning(log_string)
             elif severity in ['major']:
                 rmt_logger.error(log_string)
             elif severity in ['critical']:
@@ -957,7 +965,7 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
             "severity": severity,
             "correlation_id": correlation,
             "time": device_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            "cleared": False if status.lower() is "raised" else True,
+            "cleared": False if status.lower() == "raised" else True,
             "type": notice_type,
         }
 
@@ -975,7 +983,7 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
             return_alert['cloudgenix_host'] = element
         return_alert['site'] = site
         if notice_type.lower() in ['alarm']:
-            return_alert["cleared"] = False if status.lower() is "raised" else True
+            return_alert["cleared"] = False if status.lower() == "raised" else True
 
         return_alert['code'] = code
         return_alert['severity'] = severity
@@ -990,12 +998,17 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
             info = {
                 "notice": "CG API to SYSLOG Generated Alert"
             }
+
         info_string = ""
-        for key, value in info.items():
-            if type(value) is list:
-                info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            else:
-                info_string = info_string + key.upper() + ": " + str(value) + " "
+        info_iter = info
+        # if info_iter happens to return 'None', continue with blank string.
+        if info_iter is not None:
+            info_string = clean_info(info_iter)
+        # for key, value in info.items():
+        #     if type(value) is list:
+        #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+        #     else:
+        #         info_string = info_string + key.upper() + ": " + str(value) + " "
 
         return_alert['site'] = site
         return_alert['status'] = status
@@ -1076,10 +1089,6 @@ if __name__ == "__main__":
                                   type=int, default=DEFAULT_TIME_BETWEEN_API_UPDATES)
 
     login_group = parser.add_argument_group('Login', 'These options allow skipping of interactive login')
-    login_group.add_argument("--email", "-E", help="Use this email as User Name instead of cloudgenix_settings.py",
-                             default=None)
-    login_group.add_argument("--pass", "-PW", help="Use this Password instead of cloudgenix_settings.py",
-                             default=None)
     login_group.add_argument("--insecure", "-I", help="Do not verify SSL certificate",
                              action='store_true',
                              default=False)
@@ -1207,12 +1216,11 @@ if __name__ == "__main__":
         # will get caught below
 
     # Validate we got an Auth Token or User/Pass
-    if not (sdk_vars["email"] and sdk_vars["password"]) and not sdk_vars["auth_token"]:
-        sys.stderr.write("{0} - Could not read user/pass or auth_token from cloudgenix_settings.py config file. "
+    if not sdk_vars["auth_token"]:
+        sys.stderr.write("{0} - Could not read auth_token from cloudgenix_settings.py config file. "
                          "Exiting.\n".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
-        print("{0} {1} {2}".format(CLOUDGENIX_USER,
-                                   CLOUDGENIX_PASSWORD,
-                                   CLOUDGENIX_AUTH_TOKEN))
+        print("{0}".format(CLOUDGENIX_AUTH_TOKEN))
+
         sys.stderr.flush()
         local_event_generate(
             info={"NOTICE": "Could not read cloudgenix_settings.py config file. Exiting."},
@@ -1315,9 +1323,10 @@ if __name__ == "__main__":
 
     if not sdk_vars['disable_name']:
         sys.stdout.write("\nCaching ID->Name values for log message substitution..\n")
-        id_map = generate_id_name_map(sdk)
-        # clean up unknown '0' values
-        id_map.pop('0')
+        id_map = generate_id_name_map(sdk, idnamev1=False)
+        # clean up unknown '0' and other single digit ID values - return None if key does not exist.
+        for lowid in range(0,9):
+            id_map.pop(str(lowid), None)
     else:
         # need something for id_map to pass single translations
         id_map = {}
@@ -1387,8 +1396,10 @@ if __name__ == "__main__":
             if curtime > (logintime + datetime.timedelta(hours=TIME_BETWEEN_IDNAME_REFRESH)):
                 if not args['disable-name']:
                     sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
-                    id_map = generate_id_name_map(sdk)
-                    id_map.pop('0')
+                    id_map = generate_id_name_map(sdk, idnamev1=False)
+                    # clean up unknown '0' and other single digit ID values - return None if key does not exist.
+                    for lowid in range(0, 9):
+                        id_map.pop(str(lowid), None)
                     sys.stdout.flush()
 
             # get new events, if logged in.

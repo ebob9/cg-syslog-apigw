@@ -1,2 +1,2 @@
-cloudgenix>=4.7.1b1
-cloudgenix-idname>=1.2.0
+cloudgenix>=5.6.1b2
+cloudgenix-idname>=2.0.2
