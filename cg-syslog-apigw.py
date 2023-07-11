@@ -7,16 +7,17 @@ cg-syslog-apigw@ebob9.com
 """
 # standard modules
 import argparse
-import logging
-from logging.handlers import SysLogHandler
-import json
-import re
-import datetime
 import collections
-import time
-import sys
+import datetime
+import json
+import logging
+import pandas as pd
+import re
 import socket
+import sys
+import time
 from copy import deepcopy
+from logging.handlers import SysLogHandler
 
 # CloudGenix Python SDK
 try:
@@ -30,7 +31,7 @@ try:
     from cloudgenix_idname import generate_id_name_map
 except ImportError as e:
     sys.stderr.write("ERROR: 'cloudgenix-idnane' python module required. "
-                     "(try 'pip install cloudgenix-idname').\n {}\n".format(e))
+                     "(try 'pip install cloudgenix-idname').\n {}\m".format(e))
     sys.exit(1)
 
 # Global Vars
@@ -39,15 +40,71 @@ ACCEPTABLE_FACILITY = ['auth', 'authpriv', 'cron', 'daemon', 'ftp', 'kern', 'lpr
 DEFAULT_TIME_BETWEEN_API_UPDATES = 300  # seconds
 DEFAULT_COLD_START_SEND_OLD_EVENTS = 24  # hours
 TIME_BETWEEN_LOGIN_ATTEMPTS = 300  # seconds
-TIME_BETWEEN_IDNAME_REFRESH = 48 # hours
+TIME_BETWEEN_IDNAME_REFRESH = 168 # hours
 REFRESH_LOGIN_TOKEN_INTERVAL = 7  # hours
-
-SYSLOG_GW_VERSION = "1.2.5"
+SYSLOG_GW_VERSION = "1.2.6"
 EMIT_TCP_SYSLOG = False
 SYSLOG_DATE_FORMAT = '%b %d %H:%M:%S'
 RFC5424 = False
 RFC5424_HOSTNAME = "cg-syslog-apigw"
-LEGACY_EVENTS_API = False
+
+# HTTP ERROR CODES
+TOO_MANY_REQUESTS = "429"
+
+MASTER_EVENT_LIST = ["APPLICATION_CUSTOM_RULE_CONFLICT",
+                     "APPLICATION_PROBE_DISABLED",
+                     "DEVICEHW_DISKENC_SYSTEM",
+                     "DEVICEHW_DISKUTIL_PARTITIONSPACE",
+                     "DEVICEHW_INTERFACE_DOWN",
+                     "DEVICEHW_INTERFACE_ERRORS",
+                     "DEVICEHW_INTERFACE_HALFDUPLEX",
+                     "DEVICEHW_MEMUTIL_SWAPSPACE",
+                     "DEVICEHW_POWER_LOST",
+                     "DEVICEIF_ADDRESS_DUPLICATE",
+                     "DEVICESW_CONCURRENT_FLOWLIMIT_EXCEEDED",
+                     "DEVICESW_CONNTRACK_FLOWLIMIT_EXCEEDED",
+                     "DEVICESW_CRITICAL_PROCESSRESTART",
+                     "DEVICESW_CRITICAL_PROCESSSTOP",
+                     "DEVICESW_DHCPRELAY_RESTART",
+                     "DEVICESW_DHCPSERVER_ERRORS",
+                     "DEVICESW_DHCPSERVER_RESTART",
+                     "DEVICESW_DISCONNECTED_FROM_CONTROLLER",
+                     "DEVICESW_FPS_LIMIT_EXCEEDED",
+                     "DEVICESW_GENERAL_PROCESSRESTART",
+                     "DEVICESW_GENERAL_PROCESSSTOP",
+                     "DEVICESW_IMAGE_UNSUPPORTED",
+                     "DEVICESW_INITIATED_CONNECTION_ON_EXCLUDED_PATH",
+                     "DEVICESW_LICENSE_VERIFICATION_FAILED",
+                     "DEVICESW_MONITOR_DISABLED",
+                     "DEVICESW_NTP_NO_SYNC",
+                     "DEVICESW_SNMP_AGENT_FAILED_TO_START",
+                     "DEVICESW_SNMP_AGENT_RESTART",
+                     "DEVICESW_SYSTEM_BOOT",
+                     "DEVICESW_TOKEN_VERIFICATION_FAILED",
+                     "NAT_POLICY_LEGACY_ALG_CONFIG_OVERRIDE",
+                     "NAT_POLICY_STATIC_NATPOOL_OVERRUN",
+                     "NETWORK_ANYNETLINK_DEGRADED",
+                     "NETWORK_ANYNETLINK_DOWN",
+                     "NETWORK_DIRECTINTERNET_DOWN",
+                     "NETWORK_DIRECTPRIVATE_DOWN",
+                     "NETWORK_POLICY_RULE_CONFLICT",
+                     "NETWORK_POLICY_RULE_DROPPED",
+                     "NETWORK_PRIVATEWAN_DEGRADED",
+                     "NETWORK_PRIVATEWAN_UNREACHABLE",
+                     "OPERATOR_SIGNUP_TOKEN_DISABLED",
+                     "PEERING_BGP_DOWN",
+                     "PEERING_CORE_DOWN",
+                     "PEERING_EDGE_DOWN",
+                     "PRIORITY_POLICY_RULE_CONFLICT",
+                     "PRIORITY_POLICY_RULE_DROPPED",
+                     "SECURITY_POLICY_RULE_INCOMPLETE",
+                     "SITE_CIRCUIT_ABSENT_FOR_POLICY",
+                     "SITE_NETWORK_SERVICE_ABSENT_FOR_POLICY",
+                     "SPOKEHA_CLUSTER_DEGRADED",
+                     "SPOKEHA_CLUSTER_DOWN",
+                     "SPOKEHA_MULTIPLE_ACTIVE_DEVICES",
+                     "SPOKEHA_STATE_UPDATE"]
+
 
 # datetime Epoch for UNIX timestamp calcs
 EPOCH = datetime.datetime(1970, 1, 1)
@@ -76,36 +133,6 @@ sdk_vars = {
 }
 
 
-def clean_info(obj):
-    """
-    Clean info into syslog format (CAPS keys, NON CAPS (normal) values.)
-    :param obj: An object from the CGX API
-    :return: String text to send to syslog.
-    """
-    if isinstance(obj, dict):
-        info_string = ""
-        # iterate dict - create info string with cap KEY only.
-        # re-run clean_info to parse values and handle sub-dicts.
-
-        for key, value in obj.items():
-            info_string = info_string + key.upper() + ": " + clean_info(value) + " "
-
-        # Return with no trailing whitespace.
-        return info_string.rstrip()
-
-    elif isinstance(obj, (list, set, tuple)):
-        # return joined list with no trailing whitespace
-        return ",".join([clean_info(value) for value in obj]).rstrip()
-
-    elif isinstance(obj, str):
-        # Return string as given with no trailing whitespace.
-        return obj.rstrip()
-
-    else:
-        # attempt casting to string if not what expected.
-        return str(obj).rstrip()
-
-
 def update_parse_audit(last_reported_event, sdk_vars):
     """
     Get audit from tenant.
@@ -126,10 +153,10 @@ def update_parse_audit(last_reported_event, sdk_vars):
         "limit": "100",
         "query_params": {
             "request_ts": {
-                "gte": 152000000000
+                "gte": start_time
             },
             "response_ts": {
-                "lte": 1525722908000
+                "lte": current_time_mark
             }
         },
         "sort_params": {
@@ -140,9 +167,6 @@ def update_parse_audit(last_reported_event, sdk_vars):
 
     # get Audits from last event.
     query = deepcopy(audit_query_tpl)
-    query["query_params"]["request_ts"]["gte"] = start_time
-    query["query_params"]["response_ts"]["lte"] = current_time_mark
-
     audit_list = []
 
     # get events from last event.
@@ -156,11 +180,6 @@ def update_parse_audit(last_reported_event, sdk_vars):
         # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
         return False, last_reported_event, [], 0, status_code
 
-    #
-    # Flag to track data
-    #
-    more_data = True
-
     # iterate through audits
     if status_audit:
 
@@ -172,7 +191,7 @@ def update_parse_audit(last_reported_event, sdk_vars):
             raw_audit_items.extend(cur_audit_items)
 
         # iterate until no more audit events
-        while more_data:
+        while cur_audit_items:
             # increment dest_page in query
             query["dest_page"] += 1
             audit_resp = sdk.post.query_auditlog(query)
@@ -181,19 +200,21 @@ def update_parse_audit(last_reported_event, sdk_vars):
             status_code = audit_resp.status_code
 
             if not status_audit:
-                # error, return empty.
-                # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                more_data = False
-
                 #
-                # Return already collected audit logs
-                # return False, last_reported_event, [], 0, status_code
+                # Check for error code
+                # if 429, sleep and resend request
+                # else, process logs retrieved until now
                 #
+                if TOO_MANY_REQUESTS in audit_resp.cgx_errors:
+                    query["dest_page"] -= 1
+                    time.sleep(1)
 
-            cur_audit_items = raw_audit.get('items', [])
-            if cur_audit_items is None:
-                more_data = False
+                else:
+                    cur_audit_items = []
+
             else:
+
+                cur_audit_items = raw_audit.get('items', [])
                 raw_audit_items.extend(cur_audit_items)
 
             # debug
@@ -277,13 +298,11 @@ def update_parse_audit(last_reported_event, sdk_vars):
         info_iter = event.get('info', {})
         # if info_iter happens to return 'None', continue with blank string.
         if info_iter is not None:
-            info_string = clean_info(info_iter)
-
-            # for key, value in event.get('info', {}).items():
-            #     if type(value) is list:
-            #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            #     else:
-            #         info_string = info_string + key.upper() + ": " + str(value) + " "
+            for key, value in event.get('info', {}).items():
+                if type(value) is list:
+                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+                else:
+                    info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
@@ -367,7 +386,16 @@ def update_parse_audit(last_reported_event, sdk_vars):
     return True, latest_event, parsed_events, len(audit_list), status_code
 
 
-def update_parse_alarm(last_reported_event, sdk_vars):
+def check_event_start(alarm, alarm_event_start):
+    event_isodate = str(alarm['_created_on_utc'])
+    if len(event_isodate) > 20:  # quick check for microseconds.
+        event_datetime = datetime.datetime.strptime(event_isodate, '%Y-%m-%dT%H:%M:%S.%fZ')
+    else:
+        event_datetime = datetime.datetime.strptime(event_isodate, '%Y-%m-%dT%H:%M:%SZ')
+    return event_datetime >= alarm_event_start
+
+
+def update_parse_alarm(last_reported_event, sdk_vars, syslog_alarms):
     """
     Get events from tenant.
     :param sdk_vars: sdk_vars global info struct
@@ -375,50 +403,34 @@ def update_parse_alarm(last_reported_event, sdk_vars):
     :return: status (boolean), parsed_events (event report struct), json_events (events list in json)
     """
     latest_event = last_reported_event
-    current_datetime_mark = datetime.datetime.utcnow()
-    current_time_mark = current_datetime_mark.isoformat() + 'Z'
     parsed_events = []
 
-    # add 1 second to make sure we don't get the same event over and over)
-    start_time = (last_reported_event + datetime.timedelta(seconds=1)).isoformat() + 'Z'
+    event_codes = MASTER_EVENT_LIST
+    for code in ALARM_EVENT_IGNORE:
+        if code in MASTER_EVENT_LIST:
+            event_codes.remove(code)
 
-    alarms_list = []
-
-    # check for Legacy event API.
-    if LEGACY_EVENTS_API:
-        events_query_tpl = {
-            "severity": [],
-            "query": {
-                "type": "alarm",
-            },
-            "_offset": None,
-            "summary": False,
-        }
-    else:
-        events_query_tpl = {
-            "severity": [],
-            "query": {
-                "type": [
-                    "alarm"
-                ]
-            },
-            "_offset": None,
-            "view": {
-                "summary": False
-            }
-        }
-
-    # get events from last event.
+    alarms_list_standing = []
+    #
+    # Standing Alarms
+    #
+    events_query_tpl = {
+        "limit":{
+            "count": 100,
+            "sort_on": "time",
+            "sort_order": "descending"
+        },
+        "severity": [],
+        "query": {
+            "type": ["alarm"],
+            "code": event_codes
+        },
+        "_offset": None,
+        "acknowledged": False
+    }
     query = deepcopy(events_query_tpl)
-    query["start_time"] = start_time
-    query["end_time"] = current_time_mark
 
-    # check for Legacy event API.
-    if LEGACY_EVENTS_API:
-        event_resp = sdk.post.events_query(query, api_version='v2.0')
-    else:
-        # if not legacy, use latest version.
-        event_resp = sdk.post.events_query(query)
+    event_resp = sdk.post.events_query(data=query)
 
     status_alarm = event_resp.cgx_status
     raw_alarms = event_resp.cgx_content
@@ -427,14 +439,14 @@ def update_parse_alarm(last_reported_event, sdk_vars):
     if not status_alarm or type(raw_alarms) is not dict:
         # error, return empty.
         # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-        return False, last_reported_event, [], 0, status_code
+        return False, last_reported_event, [], 0, status_code, syslog_alarms
 
     # iterate through paged queries as supported.
 
     # iterate through alarms
     if status_alarm:
         # add current alarms to list
-        alarms_list.extend(raw_alarms.get('items', []))
+        alarms_list_standing.extend(raw_alarms.get('items', []))
         offset = raw_alarms.get('_offset')
         # debug offset
         # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
@@ -446,33 +458,155 @@ def update_parse_alarm(last_reported_event, sdk_vars):
             status_code = event_resp.status_code
 
             if not status_alarm:
-                # error, return empty.
-                # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                # return False, last_reported_event, [], 0, status_code
-                # Update: Do not return empty. Instead, return data already retrieved
+                #
+                # If error returning offset alarms, continue to query cleared alarms
+                #
                 offset = None
 
             else:
-                alarms_list.extend(raw_alarms.get('items', []))
+                alarms_list_standing.extend(raw_alarms.get('items', []))
                 offset = raw_alarms.get('_offset')
+
             # debug offset
             # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
 
-    if not alarms_list:
-        # Valid transaction, but no data. Return empty.
-        return True, last_reported_event, [], 0, status_code
+    #alarms_list_standing = list(filter(lambda x: (datetime.datetime.strptime(str(x['_created_on_utc']), '%Y-%m-%dT%H:%M:%S.%fZ') >= sdk_vars['alarm_event_start']), alarms_list_standing))
+
+    #alarms_list_standing = list(filter(lambda x: check_event_start(x, sdk_vars['alarm_event_start']), alarms_list_standing))
+
+    for alarm in alarms_list_standing[:]:
+        event_isodate = str(alarm['_created_on_utc'])
+        if len(event_isodate) > 20:  # quick check for microseconds.
+            event_datetime = datetime.datetime.strptime(event_isodate, '%Y-%m-%dT%H:%M:%S.%fZ')
+        else:
+            event_datetime = datetime.datetime.strptime(event_isodate, '%Y-%m-%dT%H:%M:%SZ')
+        if event_datetime <= sdk_vars['alarm_event_start']:
+            alarms_list_standing.remove(alarm)
+
+    #
+    # Cleared Alarms
+    #
+    #add 1 second to make sure we don't get the same event over and over)
+    #start_time = (latest_event + datetime.timedelta(seconds=1)).isoformat() + 'Z'
+    alarms_list_cleared = []
+    current_datetime_mark = datetime.datetime.utcnow()
+    current_time_mark = current_datetime_mark.isoformat() + 'Z'
+    start_time = (latest_event).isoformat() + 'Z'
+
+    events_query_tpl = {
+        "limit":{
+            "count": 100,
+            "sort_on": "time",
+            "sort_order": "descending"
+        },
+        "severity": [],
+        "query": {
+            "type": ["alarm"],
+            "code": event_codes
+        },
+        "_offset": None,
+        "acknowledged": False
+    }
+
+    # get events from last event.
+    query = deepcopy(events_query_tpl)
+    query["start_time"] = start_time
+    query["end_time"] = current_time_mark
+
+
+    event_resp = sdk.post.events_query(query)
+
+    status_alarm = event_resp.cgx_status
+    raw_alarms = event_resp.cgx_content
+    status_code = event_resp.status_code
+
+
+    if not status_alarm or type(raw_alarms) is not dict:
+        # error, return empty.
+        # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
+        return False, last_reported_event, [], 0, status_code, syslog_alarms
+
+    # iterate through paged queries as supported.
+
+    # iterate through alarms
+    if status_alarm:
+        # add current alarms to list
+        alarms_list_cleared.extend(raw_alarms.get('items', []))
+        offset = raw_alarms.get('_offset')
+        # debug offset
+        # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
+        while offset:
+            query["_offset"] = offset
+            event_resp = sdk.post.events_query(query)
+            status_alarm = event_resp.cgx_status
+            raw_alarms = event_resp.cgx_content
+            status_code = event_resp.status_code
+
+            if not status_alarm:
+                #
+                # If error returning offset alarms, continue to send alarms retrieved until now
+                # last_reported_event can be used to retrieve alarms again
+                #
+                offset = None
+
+            else:
+                alarms_list_cleared.extend(raw_alarms.get('items', []))
+                offset = raw_alarms.get('_offset')
+
+            # debug offset
+            # sys.stdout.write(str(raw_alarms.get("total_count", "??")) + " / " + str(len(alarms_list)))
+
+    standingalarms_df = pd.DataFrame(alarms_list_standing)
+    clearedalarms_df = pd.DataFrame(alarms_list_cleared)
 
     # combine lists
     combined_list = []
-    combined_list.extend(alarms_list)
+    combined_list.extend(alarms_list_standing)
+    combined_list.extend(alarms_list_cleared)
+
+    if not combined_list:
+        # Valid transaction, but no data. Return empty.
+        return True, last_reported_event, [], 0, status_code, syslog_alarms
 
     # sort by create time
     events_list = sorted(combined_list, key=lambda k: k["time"])
 
+    standing_correlation_ids = []
+    if hasattr(standingalarms_df, "correlation_id"):
+        standing_correlation_ids = list(standingalarms_df.correlation_id.unique())
+    cleared_correlation_ids = []
+    if hasattr(clearedalarms_df, "correlation_id"):
+        cleared_correlation_ids = list(clearedalarms_df.correlation_id.unique())
+
     # parse events
     for event in events_list:
 
-        discard_event = False
+        #
+        # Check if event already sent to syslog server
+        #
+        if event["correlation_id"] in syslog_alarms:
+
+            #
+            # If event is standing and already sent to syslog server, continue to next event
+            #
+            if event["correlation_id"] in standing_correlation_ids:
+                continue
+
+            #
+            # If event is in cleared set and already sent to syslog:
+            # - Check if alarm is cleared -> remove from syslog_alarm to reduce size of DB
+            # - If alarm is not cleared, don't resend raised alarm
+            #
+            elif event["correlation_id"] in cleared_correlation_ids:
+                if event["cleared"]:
+                    syslog_alarms.remove(event["correlation_id"])
+
+
+                else:
+                    continue
+        else:
+            syslog_alarms.append(event["correlation_id"])
+
 
         event_dict = collections.OrderedDict()
 
@@ -500,107 +634,88 @@ def update_parse_alarm(last_reported_event, sdk_vars):
                 #                                     event_datetime.strftime("%b %d %Y %H:%M:%S"))
                 latest_event = event_datetime
 
-        info_string = ""
-        info_iter = event.get('info', {})
-        # if info_iter happens to return 'None', continue with blank string.
-        if info_iter is not None:
-            info_string = clean_info(info_iter)
 
-            # for key, value in event.get('info', {}).items():
-            #     if type(value) is list:
-            #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            #     else:
-            #         info_string = info_string + key.upper() + ": " + str(value) + " "
+        info_iter = event.get('info', None)
+        if info_iter is None:
+            info_string = ""
+        else:
+            info_string = str(info_iter)
+
+        # # if info_iter happens to return 'None', continue with blank string.
+        # if info_iter is not None:
+        #     for key, value in event.get('info', {}).items():
+        #         if type(value) is list:
+        #             info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+        #         else:
+        #             info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
         reference = event.get('entity_ref', "none")
 
-        # find out if this Alarm event should be ignored.
-        for regex_search in sdk_vars['ignore_alarm']:
-            # if discard is already determined, bypass loop logic.
-            if discard_event:
-                continue
 
-            # check code then reference for match
-            code_check = regex_search.match(code)
-            reference_check = regex_search.match(reference)
+        reference_string = "REFERENCE: " + reference
 
-            if code_check:
-                clilogger.debug("DISCARD: Alarm discarded due to code '{0}' matching '{1}'."
-                                "".format(code, regex_search.pattern))
-                discard_event = True
-            elif reference_check:
-                clilogger.debug("DISCARD: Alarm discarded due to reference '{0}' matching '{1}'."
-                                "".format(reference, regex_search.pattern))
-                discard_event = True
+        # start adding items to ordered dict
+        # xlate siteid to name, if exists
+        event_siteid = event.get('site_id', '')
+        event_elementid = event.get('element_id', '')
+
+        if sdk_vars.get('emit_json'):
+            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
+            event_dict['site'] = id_map.get(event_siteid, event_siteid)
+
+            # just populate the message as raw JSON.
+            event_dict['info'] = json.dumps(event)
+
+        elif RFC5424:
+            # Strict RFC5424
+            # set type to alert if not set.
+            event_dict['type'] = event.get('type', 'alarm')
+
+            event_dict['cloudgenix_host'] = id_map.get(event_elementid, event_elementid)
+
+            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
+            event_dict['site'] = id_map.get(event_siteid, event_siteid)
+
+            if not event.get('cleared'):
+                event_dict['status'] = 'raised'
             else:
-                clilogger.debug("KEEP: Alarm kept due to no match of code '{0}' or reference '{1}' to '{2}'"
-                                .format(code, reference, regex_search.pattern))
+                event_dict['status'] = 'cleared'
+            event_dict['code'] = code
+            event_dict['device_time'] = syslogdate
+            event_dict['severity'] = event.get('severity', 'info')
+            event_dict['correlation'] = event.get('correlation_id', '')
+            # for RFC5424, pass everything as key/value.
+            event_info = event.get('info', {})
+            if event_info:
+                event_dict.update(event_info)
 
-        if not discard_event:
-            reference_string = "REFERENCE: " + reference
+        else:
+            # Normal text SYSLOG.
 
-            # start adding items to ordered dict
-            # xlate siteid to name, if exists
-            event_siteid = event.get('site_id', '')
-            event_elementid = event.get('element_id', '')
+            # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
+            event_dict['site'] = id_map.get(event_siteid, event_siteid)
 
-            if sdk_vars.get('emit_json'):
-                # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-                event_dict['site'] = id_map.get(event_siteid, event_siteid)
-
-                # just populate the message as raw JSON.
-                event_dict['info'] = json.dumps(event)
-
-            elif RFC5424:
-                # Strict RFC5424
-                # set type to alert if not set.
-                event_dict['type'] = event.get('type', 'alarm')
-
-                event_dict['cloudgenix_host'] = id_map.get(event_elementid, event_elementid)
-
-                # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-                event_dict['site'] = id_map.get(event_siteid, event_siteid)
-
-                if not event.get('cleared'):
-                    event_dict['status'] = 'raised'
-                else:
-                    event_dict['status'] = 'cleared'
-                event_dict['code'] = code
-                event_dict['device_time'] = syslogdate
-                event_dict['severity'] = event.get('severity', 'info')
-                event_dict['correlation'] = event.get('correlation_id', '')
-                # for RFC5424, pass everything as key/value.
-                event_info = event.get('info', {})
-                if event_info:
-                    event_dict.update(event_info)
-
+            if not event.get('cleared'):
+                event_dict['status'] = 'raised'
             else:
-                # Normal text SYSLOG.
+                event_dict['status'] = 'cleared'
+            event_dict['code'] = code
+            event_dict['device_time'] = syslogdate
+            event_dict['severity'] = event.get('severity', 'info')
+            event_dict['type'] = event.get('type', '')
+            event_dict['correlation'] = event.get('correlation_id', '')
+            event_dict['info'] = reference_string + " " + info_string
 
-                # try to translate to name - if no name return site id, or UNKNOWN if no ID in message.
-                event_dict['site'] = id_map.get(event_siteid, event_siteid)
-
-                if not event.get('cleared'):
-                    event_dict['status'] = 'raised'
-                else:
-                    event_dict['status'] = 'cleared'
-                event_dict['code'] = code
-                event_dict['device_time'] = syslogdate
-                event_dict['severity'] = event.get('severity', 'info')
-                event_dict['type'] = event.get('type', '')
-                event_dict['correlation'] = event.get('correlation_id', '')
-                event_dict['info'] = reference_string + " " + info_string
-
-            event_dict['id'] = event.get('id','')
-            parsed_events.append(event_dict)
+        event_dict['id'] = event.get('id','')
+        parsed_events.append(event_dict)
 
     # sys.stdout.write(json.dumps(parsed_events, indent=4))
     #
     # sys.stdout.write(repr(latest_event))
 
-    return True, latest_event, parsed_events, len(alarms_list), status_code
+    return True, latest_event, parsed_events, len(combined_list), status_code, syslog_alarms
 
 
 def update_parse_alert(last_reported_event, sdk_vars):
@@ -620,41 +735,32 @@ def update_parse_alert(last_reported_event, sdk_vars):
 
     alerts_list = []
 
-    # check for Legacy event API.
-    if LEGACY_EVENTS_API:
-        events_query_tpl = {
-            "severity": [],
-            "query": {
-                "type": "alert",
-            },
-            "_offset": None,
-            "summary": False,
+
+    events_query_tpl = {
+        "limit": {
+            "count": 100,
+            "sort_on": "time",
+            "sort_order": "descending"
+        },
+        "severity": [],
+        "query": {
+            "type": [
+                "alert"
+            ]
+        },
+        "_offset": None,
+        "view": {
+            "summary": False
         }
-    else:
-        events_query_tpl = {
-            "severity": [],
-            "query": {
-                "type": [
-                    "alert"
-                ]
-            },
-            "_offset": None,
-            "view": {
-                "summary": False
-            }
-        }
+    }
 
     # get events from last event.
     query = deepcopy(events_query_tpl)
     query["start_time"] = start_time
     query["end_time"] = current_time_mark
 
-    # check for Legacy event API.
-    if LEGACY_EVENTS_API:
-        event_resp = sdk.post.events_query(query, api_version='v2.0')
-    else:
-        # if not legacy, use latest version.
-        event_resp = sdk.post.events_query(query)
+
+    event_resp = sdk.post.events_query(query)
 
     status_alert = event_resp.cgx_status
     raw_alerts = event_resp.cgx_content
@@ -684,12 +790,10 @@ def update_parse_alert(last_reported_event, sdk_vars):
             if not status_alert:
                 # error, return empty.
                 # This response will trigger a relogin attempt to mitigate multi-token refresh scenarios.
-                # return False, last_reported_event, [], 0, status_code
-                # Update: Do not return empty. Instead, return data already retrieved
-                offset = None
-            else:
-                alerts_list.extend(raw_alerts.get('items', []))
-                offset = raw_alerts.get('_offset')
+                return False, last_reported_event, [], 0, status_code
+
+            alerts_list.extend(raw_alerts.get('items', []))
+            offset = raw_alerts.get('_offset')
             # debug offset
             # sys.stdout.write(str(raw_alerts.get("total_count", "??")) + " / " + str(len(alerts_list)))
 
@@ -738,15 +842,14 @@ def update_parse_alert(last_reported_event, sdk_vars):
 
         info_string = ""
         info_iter = event.get('info', {})
-        # if info_iter happens to return 'None', continue with blank string.
-        if info_iter is not None:
-            info_string = clean_info(info_iter)
-
-            # for key, value in event.get('info', {}).items():
-            #     if type(value) is list:
-            #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-            #     else:
-            #         info_string = info_string + key.upper() + ": " + str(value) + " "
+        if info_iter is None:
+            info_string = ""
+        else:
+            for key, value in event.get('info', {}).items():
+                if type(value) is list:
+                    info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+                else:
+                    info_string = info_string + key.upper() + ": " + str(value) + " "
 
         # pull code and reference for filtering
         code = event.get('code', '')
@@ -888,7 +991,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
             if severity in ['info']:
                 rmt_logger.info(log_string)
             elif severity in ['minor']:
-                rmt_logger.warning(log_string)
+                rmt_logger.warn(log_string)
             elif severity in ['major']:
                 rmt_logger.error(log_string)
             elif severity in ['critical']:
@@ -921,7 +1024,7 @@ def emit_syslog(parsed_events, rmt_logger, passed_id_map=None):
             if severity in ['info']:
                 rmt_logger.info(log_string)
             elif severity in ['minor']:
-                rmt_logger.warning(log_string)
+                rmt_logger.warn(log_string)
             elif severity in ['major']:
                 rmt_logger.error(log_string)
             elif severity in ['critical']:
@@ -965,7 +1068,7 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
             "severity": severity,
             "correlation_id": correlation,
             "time": device_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            "cleared": False if status.lower() == "raised" else True,
+            "cleared": False if status.lower() is "raised" else True,
             "type": notice_type,
         }
 
@@ -983,7 +1086,7 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
             return_alert['cloudgenix_host'] = element
         return_alert['site'] = site
         if notice_type.lower() in ['alarm']:
-            return_alert["cleared"] = False if status.lower() == "raised" else True
+            return_alert["cleared"] = False if status.lower() is "raised" else True
 
         return_alert['code'] = code
         return_alert['severity'] = severity
@@ -998,17 +1101,12 @@ def local_event_generate(site="CG-SYSLOG-APIGW", status="raised", code="CG_API_S
             info = {
                 "notice": "CG API to SYSLOG Generated Alert"
             }
-
         info_string = ""
-        info_iter = info
-        # if info_iter happens to return 'None', continue with blank string.
-        if info_iter is not None:
-            info_string = clean_info(info_iter)
-        # for key, value in info.items():
-        #     if type(value) is list:
-        #         info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
-        #     else:
-        #         info_string = info_string + key.upper() + ": " + str(value) + " "
+        for key, value in info.items():
+            if type(value) is list:
+                info_string = info_string + key.upper() + ": " + str(",".join(value)) + " "
+            else:
+                info_string = info_string + key.upper() + ": " + str(value) + " "
 
         return_alert['site'] = site
         return_alert['status'] = status
@@ -1072,9 +1170,7 @@ if __name__ == "__main__":
     parsing_group.add_argument("--disable-alert", "-DALERT", help="Disable Sending Alert Log",
                                action='store_true',
                                default=False)
-    parsing_group.add_argument("--legacy-events", "-LE", help="Use Legacy Events API (v2.0)",
-                               action='store_true',
-                               default=False)
+
 
     # Allow Controller modification and debug level sets.
     controller_group = parser.add_argument_group('API', 'These options change how this program connects to the API.')
@@ -1089,6 +1185,10 @@ if __name__ == "__main__":
                                   type=int, default=DEFAULT_TIME_BETWEEN_API_UPDATES)
 
     login_group = parser.add_argument_group('Login', 'These options allow skipping of interactive login')
+    login_group.add_argument("--email", "-E", help="Use this email as User Name instead of cloudgenix_settings.py",
+                             default=None)
+    login_group.add_argument("--pass", "-PW", help="Use this Password instead of cloudgenix_settings.py",
+                             default=None)
     login_group.add_argument("--insecure", "-I", help="Do not verify SSL certificate",
                              action='store_true',
                              default=False)
@@ -1191,8 +1291,6 @@ if __name__ == "__main__":
         # set logging off unless asked for, since we are using same library system for sending syslog.
         pass
 
-    # set legacy V2 global
-    LEGACY_EVENTS_API = args['legacy_events']
 
     clilogger.info("Initial Launch:")
 
@@ -1216,11 +1314,12 @@ if __name__ == "__main__":
         # will get caught below
 
     # Validate we got an Auth Token or User/Pass
-    if not sdk_vars["auth_token"]:
-        sys.stderr.write("{0} - Could not read auth_token from cloudgenix_settings.py config file. "
+    if not (sdk_vars["email"] and sdk_vars["password"]) and not sdk_vars["auth_token"]:
+        sys.stderr.write("{0} - Could not read user/pass or auth_token from cloudgenix_settings.py config file. "
                          "Exiting.\n".format(str(datetime.datetime.utcnow().strftime(SYSLOG_DATE_FORMAT))))
-        print("{0}".format(CLOUDGENIX_AUTH_TOKEN))
-
+        print("{0} {1} {2}".format(CLOUDGENIX_USER,
+                                   CLOUDGENIX_PASSWORD,
+                                   CLOUDGENIX_AUTH_TOKEN))
         sys.stderr.flush()
         local_event_generate(
             info={"NOTICE": "Could not read cloudgenix_settings.py config file. Exiting."},
@@ -1323,10 +1422,9 @@ if __name__ == "__main__":
 
     if not sdk_vars['disable_name']:
         sys.stdout.write("\nCaching ID->Name values for log message substitution..\n")
-        id_map = generate_id_name_map(sdk, idnamev1=False)
-        # clean up unknown '0' and other single digit ID values - return None if key does not exist.
-        for lowid in range(0,9):
-            id_map.pop(str(lowid), None)
+        id_map = generate_id_name_map(sdk)
+        # clean up unknown '0' values
+        id_map.pop('0')
     else:
         # need something for id_map to pass single translations
         id_map = {}
@@ -1348,6 +1446,12 @@ if __name__ == "__main__":
     audit_last_event_date = sdk_vars['audit_event_start']
     alarm_last_event_date = sdk_vars['alarm_event_start']
     alert_last_event_date = sdk_vars['alert_event_start']
+
+    #
+    # List of correlation IDs to keep track of alarms sent to syslog
+    # This list only tracks standing alarms
+    #
+    syslog_alarms_corrid_list = []
 
     # catch keyboard interrupt
     try:
@@ -1394,21 +1498,17 @@ if __name__ == "__main__":
                         sys.stdout.flush()
 
             if curtime > (logintime + datetime.timedelta(hours=TIME_BETWEEN_IDNAME_REFRESH)):
-                if not args['disable-name']:
+                if not args['disable_name']:
                     sys.stdout.write("\nUpdating ID->Name values for log message substitution..\n")
-                    id_map = generate_id_name_map(sdk, idnamev1=False)
-                    # clean up unknown '0' and other single digit ID values - return None if key does not exist.
-                    for lowid in range(0, 9):
-                        id_map.pop(str(lowid), None)
+                    id_map = generate_id_name_map(sdk)
+                    id_map.pop('0')
                     sys.stdout.flush()
 
             # get new events, if logged in.
             if logged_in:
                 if not sdk_vars['disable_audit']:
                     # Audit events
-                    audit_status, audit_last_event_date, \
-                        audit_parsed_events, audit_event_count, \
-                        audit_resp_code = update_parse_audit(audit_last_event_date, sdk_vars=sdk_vars)
+                    audit_status, audit_last_event_date, audit_parsed_events, audit_event_count, audit_resp_code = update_parse_audit(audit_last_event_date, sdk_vars=sdk_vars)
 
                     # success and data returned
                     if audit_status and audit_parsed_events:
@@ -1445,9 +1545,7 @@ if __name__ == "__main__":
 
                 if not sdk_vars['disable_alarm']:
                     # Alarm events
-                    alarm_status, alarm_last_event_date, \
-                        alarm_parsed_events, alarm_event_count, \
-                        alarm_resp_code = update_parse_alarm(alarm_last_event_date, sdk_vars=sdk_vars)
+                    alarm_status, alarm_last_event_date, alarm_parsed_events, alarm_event_count, alarm_resp_code, syslog_alarms_corrid_list = update_parse_alarm(alarm_last_event_date, sdk_vars=sdk_vars, syslog_alarms=syslog_alarms_corrid_list)
 
                     # success and data returned
                     if alarm_status and alarm_parsed_events:
@@ -1484,9 +1582,7 @@ if __name__ == "__main__":
 
                 if not sdk_vars['disable_alert']:
                     # Alert events
-                    alert_status, alert_last_event_date, \
-                        alert_parsed_events, alert_event_count, \
-                        alert_resp_code = update_parse_alert(alert_last_event_date, sdk_vars=sdk_vars)
+                    alert_status, alert_last_event_date, alert_parsed_events, alert_event_count, alert_resp_code = update_parse_alert(alert_last_event_date, sdk_vars=sdk_vars)
 
                     # success and data returned
                     if alert_status and alert_parsed_events:
